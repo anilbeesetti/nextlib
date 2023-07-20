@@ -3,6 +3,7 @@ import com.android.build.gradle.internal.tasks.factory.dependsOn
 plugins {
     alias(libs.plugins.androidLibrary)
     alias(libs.plugins.kotlinAndroid)
+    id("maven-publish")
 }
 
 android {
@@ -61,4 +62,18 @@ dependencies {
     implementation(libs.androidx.annotation)
     compileOnly(libs.checker.qual)
     compileOnly(libs.kotlin.annotations.jvm)
+}
+
+afterEvaluate {
+    publishing {
+        publications {
+            create<MavenPublication>("mavenJava") {
+                groupId = "com.github.anilbeesetti"
+                artifactId = "nextlib"
+                version = "1.0"
+
+                from(components["release"])
+            }
+        }
+    }
 }
