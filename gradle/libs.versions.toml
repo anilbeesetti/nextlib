@@ -1,0 +1,18 @@
+[versions]
+agp = "8.2.0-alpha11"
+kotlin = "1.8.22"
+androidxMedia3 = "1.1.0"
+checkerQual = "3.34.0"
+googleErrorProne = "2.18.0"
+androidxAnnotation = "1.6.0"
+
+[libraries]
+androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
+kotlin-annotations-jvm = { group = "org.jetbrains.kotlin", name = "kotlin-annotations-jvm", version.ref = "kotlin" }
+androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "androidxMedia3" }
+checker-qual = { group = "org.checkerframework", name = "checker-qual", version.ref = "checkerQual" }
+google-errorprone-annotations = { group = "com.google.errorprone", name = "error_prone_annotations", version.ref = "googleErrorProne" }
+
+[plugins]
+androidLibrary = { id = "com.android.library", version.ref = "agp" }
+kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
