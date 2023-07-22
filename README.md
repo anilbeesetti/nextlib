@@ -19,8 +19,7 @@ If you're using Gradle, you could add NextLib as a dependency with the following
 
 To use Ffmpeg decoders in your app, Add `NextRenderersFactory` to `ExoPlayer`
 ```kotlin
-val renderersFactory = NextRenderersFactory(applicationContext)
-    .setUseExperimentalRenderers(true) // At this point in time, video decoders are experimental so you need enable experimental ffmpeg video renderers
+val renderersFactory = NextRenderersFactory(applicationContext) // NextRenderersFactory is one to one compatible with DefaultRenderersFactory
 
 ExoPlayer.Builder(applicationContext)
     .setRenderersFactory(renderersFactory)
