@@ -12,8 +12,6 @@ import androidx.media3.exoplayer.audio.AudioSink;
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector;
 import androidx.media3.exoplayer.video.VideoRendererEventListener;
 
-import com.google.errorprone.annotations.CanIgnoreReturnValue;
-
 import java.util.ArrayList;
 
 @UnstableApi
@@ -25,8 +23,6 @@ public class NextRenderersFactory extends DefaultRenderersFactory {
     public NextRenderersFactory(Context context) {
         super(context);
     }
-
-    private boolean useExperimentalRenderers;
 
     private static final String TAG = "NextRenderersFactory";
 
@@ -55,7 +51,6 @@ public class NextRenderersFactory extends DefaultRenderersFactory {
     protected void buildVideoRenderers(Context context, int extensionRendererMode, MediaCodecSelector mediaCodecSelector, boolean enableDecoderFallback, Handler eventHandler, VideoRendererEventListener eventListener, long allowedVideoJoiningTimeMs, ArrayList<Renderer> out) {
         super.buildVideoRenderers(context, extensionRendererMode, mediaCodecSelector, enableDecoderFallback, eventHandler, eventListener, allowedVideoJoiningTimeMs, out);
 
-        if (!useExperimentalRenderers) return;
         if (extensionRendererMode == EXTENSION_RENDERER_MODE_OFF) return;
 
         int extensionRendererIndex = out.size();
@@ -71,11 +66,5 @@ public class NextRenderersFactory extends DefaultRenderersFactory {
             // The extension is present, but instantiation failed.
             throw new RuntimeException("Error instantiating FFmpeg extension", e);
         }
-    }
-
-    @CanIgnoreReturnValue
-    public NextRenderersFactory setUseExperimentalRenderers(boolean useExperimentalRenderers) {
-        this.useExperimentalRenderers = useExperimentalRenderers;
-        return this;
     }
 }
