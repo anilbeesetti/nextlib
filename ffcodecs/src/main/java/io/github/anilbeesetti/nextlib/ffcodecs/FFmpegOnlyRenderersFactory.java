@@ -1,4 +1,4 @@
-package com.github.anilbeesetti.nextlib.ffcodecs;
+package io.github.anilbeesetti.nextlib.ffcodecs;
 
 import android.content.Context;
 import android.os.Handler;

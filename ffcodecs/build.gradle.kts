@@ -68,7 +68,7 @@ afterEvaluate {
     publishing {
         publications {
             create<MavenPublication>("mavenJava") {
-                groupId = "com.github.anilbeesetti"
+                groupId = "io.github.anilbeesetti"
                 artifactId = "nextlib"
                 version = "1.0"
 
