@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "com.com.github.anilbeesetti.nextlib.ffcodecs"
+    namespace = "io.github.anilbeesetti.nextlib.ffcodecs"
 
     compileSdk = 33
 
