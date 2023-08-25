@@ -2,7 +2,7 @@
 
 [![Build nextlib](https://github.com/anilbeesetti/nextlib/actions/workflows/build.yaml/badge.svg)](https://github.com/anilbeesetti/nextlib/actions/workflows/build.yaml) [![](https://jitpack.io/v/anilbeesetti/nextlib.svg)](https://jitpack.io/#anilbeesetti/nextlib)
 
-NextLib is a library for adding ffmpeg codecs to exoplayer.
+NextLib is a library for adding ffmpeg codecs to [Media3](https://github.com/androidx/media).
 
 ## Currently supported decoders
 - **Audio**: Vorbis, Opus, Flac, Alac, pcm_mulaw, pcm_alaw, MP3, Amrnb, Amrwb, AAC, AC3, EAC3, dca, mlp, truehd
