@@ -37,7 +37,7 @@ const int kPlaneV = 2;
 const int kMaxPlanes = 3;
 
 // Android YUV format. See:
-// https://com_githubeloper.android.com/reference/android/graphics/ImageFormat.html#YV12.
+// https://developer.android.com/reference/android/graphics/ImageFormat.html#YV12.
 const int kImageFormatYV12 = 0x32315659;
 
 struct JniContext {
@@ -69,7 +69,6 @@ struct JniContext {
     jfieldID data_field{};
     jfieldID yuvPlanes_field{};
     jfieldID yuvStrides_field{};
-    jmethodID init_for_private_frame_method{};
     jmethodID init_for_yuv_frame_method{};
     jmethodID init_method{};
 
@@ -121,14 +120,9 @@ JniContext *createVideoContext(JNIEnv *env,
     jclass outputBufferClass = env->FindClass("androidx/media3/decoder/VideoDecoderOutputBuffer");
     jniContext->data_field = env->GetFieldID(outputBufferClass, "data", "Ljava/nio/ByteBuffer;");
     jniContext->yuvStrides_field = env->GetFieldID(outputBufferClass, "yuvStrides", "[I");
-    jniContext->yuvPlanes_field =
-            env->GetFieldID(outputBufferClass, "yuvPlanes", "[Ljava/nio/ByteBuffer;");
-    jniContext->init_for_private_frame_method =
-            env->GetMethodID(outputBufferClass, "initForPrivateFrame", "(II)V");
-    jniContext->init_for_yuv_frame_method =
-            env->GetMethodID(outputBufferClass, "initForYuvFrame", "(IIIII)Z");
-    jniContext->init_method =
-            env->GetMethodID(outputBufferClass, "init", "(JILjava/nio/ByteBuffer;)V");
+    jniContext->yuvPlanes_field = env->GetFieldID(outputBufferClass, "yuvPlanes", "[Ljava/nio/ByteBuffer;");
+    jniContext->init_for_yuv_frame_method = env->GetMethodID(outputBufferClass, "initForYuvFrame", "(IIIII)Z");
+    jniContext->init_method = env->GetMethodID(outputBufferClass, "init", "(JILjava/nio/ByteBuffer;)V");
 
     return jniContext;
 }
@@ -137,10 +131,10 @@ JniContext *createVideoContext(JNIEnv *env,
 extern "C"
 JNIEXPORT jlong JNICALL
 Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegInitialize(JNIEnv *env,
-                                                                           jobject thiz,
-                                                                           jstring codec_name,
-                                                                           jbyteArray extra_data,
-                                                                           jint threads) {
+                                                                                 jobject thiz,
+                                                                                 jstring codec_name,
+                                                                                 jbyteArray extra_data,
+                                                                                 jint threads) {
     AVCodec *codec = getCodecByName(env, codec_name);
     if (!codec) {
         LOGE("Codec not found.");
@@ -153,7 +147,7 @@ Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegInitialize
 extern "C"
 JNIEXPORT jlong JNICALL
 Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegReset(JNIEnv *env, jobject thiz,
-                                                                      jlong jContext) {
+                                                                            jlong jContext) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
     AVCodecContext *context = jniContext->codecContext;
     if (!context) {
@@ -168,7 +162,7 @@ Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegReset(JNIE
 extern "C"
 JNIEXPORT void JNICALL
 Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegRelease(JNIEnv *env, jobject thiz,
-                                                                        jlong jContext) {
+                                                                              jlong jContext) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
     AVCodecContext *context = jniContext->codecContext;
     if (context) {
@@ -180,12 +174,12 @@ Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegRelease(JN
 extern "C"
 JNIEXPORT jint JNICALL
 Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegRenderFrame(JNIEnv *env,
-                                                                            jobject thiz,
-                                                                            jlong jContext,
-                                                                            jobject surface,
-                                                                            jobject output_buffer,
-                                                                            jint displayed_width,
-                                                                            jint displayed_height) {
+                                                                                  jobject thiz,
+                                                                                  jlong jContext,
+                                                                                  jobject surface,
+                                                                                  jobject output_buffer,
+                                                                                  jint displayed_width,
+                                                                                  jint displayed_height) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
     if (!jniContext->MaybeAcquireNativeWindow(env, surface)) {
         return VIDEO_DECODER_ERROR_OTHER;
@@ -224,7 +218,6 @@ Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegRenderFram
     ANativeWindow_Buffer native_window_buffer;
     int result = ANativeWindow_lock(jniContext->native_window, &native_window_buffer, nullptr);
     if (result == -19) {
-        // Surface: dequeueBuffer failed (No such com_githubice)
         jniContext->surface = nullptr;
         return VIDEO_DECODER_SUCCESS;
     } else if (result || native_window_buffer.bits == nullptr) {
@@ -250,7 +243,7 @@ Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegRenderFram
 
     int strideY = yuvStrides[kPlaneY];
     int strideU = yuvStrides[kPlaneU];
-    int stricom_github = yuvStrides[kPlaneV];
+    int strideV = yuvStrides[kPlaneV];
 
 
     const int32_t native_window_buffer_uv_height = (native_window_buffer.height + 1) / 2;
@@ -265,7 +258,7 @@ Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegRenderFram
     uint8_t *src[3] = {planeY, planeU, planeV};
 
     // source strides
-    int src_stride[3] = {strideY, strideU, stricom_github};
+    int src_stride[3] = {strideY, strideU, strideV};
 
     // destination data with u and v swapped
     uint8_t *dest[3] = {native_window_buffer_bits,
@@ -299,11 +292,11 @@ Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegRenderFram
 extern "C"
 JNIEXPORT jint JNICALL
 Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegSendPacket(JNIEnv *env,
-                                                                           jobject thiz,
-                                                                           jlong jContext,
-                                                                           jobject encoded_data,
-                                                                           jint length,
-                                                                           jlong input_time) {
+                                                                                 jobject thiz,
+                                                                                 jlong jContext,
+                                                                                 jobject encoded_data,
+                                                                                 jint length,
+                                                                                 jlong input_time) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
     AVCodecContext *avContext = jniContext->codecContext;
 
@@ -315,6 +308,7 @@ Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegSendPacket
 
     // Queue input data.
     int result = avcodec_send_packet(avContext, &packet);
+    av_packet_unref(&packet);
     if (result) {
         logError("avcodec_send_packet", result);
         if (result == AVERROR_INVALIDDATA) {
@@ -333,11 +327,11 @@ Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegSendPacket
 extern "C"
 JNIEXPORT jint JNICALL
 Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegVideoDecoder_ffmpegReceiveFrame(JNIEnv *env,
-                                                                             jobject thiz,
-                                                                             jlong jContext,
-                                                                             jint output_mode,
-                                                                             jobject output_buffer,
-                                                                             jboolean decode_only) {
+                                                                                   jobject thiz,
+                                                                                   jlong jContext,
+                                                                                   jint output_mode,
+                                                                                   jobject output_buffer,
+                                                                                   jboolean decode_only) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
     AVCodecContext *avContext = jniContext->codecContext;
 
