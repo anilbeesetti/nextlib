@@ -2,7 +2,7 @@
 agp = "8.1.1"
 kotlin = "1.9.10"
 androidxMedia3 = "1.1.1"
-checkerQual = "3.37.0"
+checkerQual = "3.38.0"
 googleErrorProne = "2.21.1"
 androidxAnnotation = "1.6.0"
 
