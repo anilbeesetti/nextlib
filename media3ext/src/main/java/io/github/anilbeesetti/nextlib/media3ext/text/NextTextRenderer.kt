@@ -1,4 +1,4 @@
-package io.github.anilbeesetti.nextlib.text
+package io.github.anilbeesetti.nextlib.media3ext.text
 
 import android.os.Looper
 import androidx.media3.exoplayer.text.SubtitleDecoderFactory

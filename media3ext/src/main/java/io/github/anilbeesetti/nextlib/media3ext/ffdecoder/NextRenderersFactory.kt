@@ -1,4 +1,4 @@
-package io.github.anilbeesetti.nextlib.ffcodecs
+package io.github.anilbeesetti.nextlib.media3ext.ffdecoder
 
 import android.content.Context
 import android.os.Handler
@@ -11,7 +11,7 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.video.VideoRendererEventListener
-import io.github.anilbeesetti.nextlib.text.NextTextRenderer
+import io.github.anilbeesetti.nextlib.media3ext.text.NextTextRenderer
 
 class NextRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
 

@@ -1,4 +1,4 @@
-package io.github.anilbeesetti.nextlib.ffcodecs;
+package io.github.anilbeesetti.nextlib.media3ext.ffdecoder;
 
 import static java.lang.Runtime.getRuntime;
 
