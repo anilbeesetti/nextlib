@@ -1,4 +1,4 @@
-package io.github.anilbeesetti.nextlib.ffcodecs;
+package io.github.anilbeesetti.nextlib.media3ext.ffdecoder;
 
 import static androidx.media3.exoplayer.audio.AudioSink.SINK_FORMAT_SUPPORTED_DIRECTLY;
 import static androidx.media3.exoplayer.audio.AudioSink.SINK_FORMAT_SUPPORTED_WITH_TRANSCODING;

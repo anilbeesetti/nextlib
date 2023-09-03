@@ -1,4 +1,4 @@
-package io.github.anilbeesetti.nextlib.ffcodecs;
+package io.github.anilbeesetti.nextlib.media3ext.ffdecoder;
 
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.decoder.DecoderException;

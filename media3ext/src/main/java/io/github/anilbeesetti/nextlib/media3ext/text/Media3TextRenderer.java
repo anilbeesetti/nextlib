@@ -1,4 +1,4 @@
-package io.github.anilbeesetti.nextlib.text;
+package io.github.anilbeesetti.nextlib.media3ext.text;
 
 import static androidx.media3.common.util.Assertions.checkNotNull;
 import static androidx.media3.common.util.Assertions.checkState;

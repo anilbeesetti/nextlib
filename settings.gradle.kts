@@ -14,4 +14,4 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "nextlib"
-include(":ffcodecs")
+include(":media3ext")

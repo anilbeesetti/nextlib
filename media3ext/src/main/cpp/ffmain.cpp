@@ -14,21 +14,21 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved) {
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegLibrary_ffmpegGetVersion(JNIEnv *env,
+Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegLibrary_ffmpegGetVersion(JNIEnv *env,
                                                                    jclass clazz) {
     return env->NewStringUTF(LIBAVCODEC_IDENT);
 }
 
 extern "C"
 JNIEXPORT jint JNICALL
-Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegLibrary_ffmpegGetInputBufferPaddingSize(
+Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegLibrary_ffmpegGetInputBufferPaddingSize(
         JNIEnv *env, jclass clazz) {
     return (jint) AV_INPUT_BUFFER_PADDING_SIZE;
 }
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_io_github_anilbeesetti_nextlib_ffcodecs_FfmpegLibrary_ffmpegHasDecoder(JNIEnv *env,
+Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegLibrary_ffmpegHasDecoder(JNIEnv *env,
                                                                    jclass clazz,
                                                                    jstring codec_name) {
     return getCodecByName(env, codec_name) != nullptr;
