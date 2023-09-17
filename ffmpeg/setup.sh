@@ -188,9 +188,14 @@ function buildFfmpeg() {
       --disable-postproc \
       --disable-avfilter \
       --disable-symver \
+      --enable-parsers \
+      --enable-demuxers \
       --enable-swresample \
+      --enable-avformat \
       --enable-libvpx \
+      --enable-protocol=file,http,https,mmsh,mmst,pipe,rtmp,rtmps,rtmpt,rtmpts,rtp,tls \
       --extra-ldexeflags=-pie \
+      --disable-debug \
       ${EXTRA_BUILD_CONFIGURATION_FLAGS} \
       ${COMMON_OPTIONS}
 

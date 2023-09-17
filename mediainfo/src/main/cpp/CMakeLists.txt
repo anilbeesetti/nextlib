@@ -1,13 +1,11 @@
 # For more information about using CMake with Android Studio, read the
-# documentation: https://d.android.com/studio/projects/add-native-code.html
+# documentation: https://d.android.com/studio/projects/add-native-code.html.
+# For more examples on how to use CMake, see https://github.com/android/ndk-samples.
 
-# Sets the minimum version of CMake required to build the native library.
-
+# Sets the minimum CMake version required for this project.
 cmake_minimum_required(VERSION 3.22.1)
 
-# Declares and names the project.
-
-project("media3ext")
+project("mediainfo")
 
 set(ffmpeg_dir ${CMAKE_SOURCE_DIR}/../../../../ffmpeg/output)
 set(ffmpeg_libs ${ffmpeg_dir}/lib/${ANDROID_ABI})
@@ -18,7 +16,7 @@ set(
         # List variable name
         ffmpeg_libs_names
         # Values in the list
-        avutil avcodec swresample swscale)
+        avcodec avformat avutil swresample swscale)
 
 foreach (ffmpeg_lib_name ${ffmpeg_libs_names})
     add_library(
@@ -32,15 +30,17 @@ foreach (ffmpeg_lib_name ${ffmpeg_libs_names})
             ${ffmpeg_libs}/lib${ffmpeg_lib_name}.so)
 endforeach ()
 
+
 add_library(${CMAKE_PROJECT_NAME} SHARED
         # List C/C++ source files with relative paths to this CMakeLists.txt.
-        ffmain.cpp
-        ffcommon.cpp
-        ffaudio.cpp
-        ffvideo.cpp)
+        main.cpp
+        mediainfo.cpp
+        utils.cpp)
 
+# Specifies libraries CMake should link to your target library. You
+# can link libraries from various origins, such as libraries defined in this
+# build script, prebuilt third-party libraries, or Android system libraries.
 target_link_libraries(${CMAKE_PROJECT_NAME}
         # List libraries link to the target library
         log
-        android
         ${ffmpeg_libs_names})
