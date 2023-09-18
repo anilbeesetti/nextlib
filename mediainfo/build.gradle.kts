@@ -56,6 +56,10 @@ val ffmpegSetup by tasks.registering(Exec::class) {
 
 tasks.preBuild.dependsOn(ffmpegSetup)
 
+dependencies {
+    implementation(libs.androidx.annotation)
+}
+
 afterEvaluate {
     publishing {
         publications {

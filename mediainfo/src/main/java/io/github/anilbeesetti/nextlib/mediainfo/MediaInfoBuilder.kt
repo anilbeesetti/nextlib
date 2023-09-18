@@ -10,6 +10,7 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract
 import android.provider.MediaStore
 import android.util.Log
+import androidx.annotation.Keep
 import java.io.FileNotFoundException
 
 class MediaInfoBuilder(private val context: Context) {
@@ -22,6 +23,8 @@ class MediaInfoBuilder(private val context: Context) {
     private var videoStream: VideoStream? = null
     private var audioStreams = mutableListOf<AudioStream>()
     private var subtitleStreams = mutableListOf<SubtitleStream>()
+
+
     fun from(filePath: String) = apply {
         nativeCreateFromPath(filePath)
     }
@@ -62,10 +65,16 @@ class MediaInfoBuilder(private val context: Context) {
      * JNI FUNCTIONS: functions to use in jni to build [MediaInfo] object.
      */
 
+    /* Used from JNI */
+    @Keep
+    @SuppressWarnings("UnusedPrivateMember")
     private fun onError() {
         this.hasError = true
     }
 
+    /* Used from JNI */
+    @Keep
+    @SuppressWarnings("UnusedPrivateMember")
     private fun onMediaInfoFound(
         fileFormatName: String,
         duration: Long
@@ -74,6 +83,9 @@ class MediaInfoBuilder(private val context: Context) {
         this.duration = duration
     }
 
+    /* Used from JNI */
+    @Keep
+    @SuppressWarnings("UnusedPrivateMember")
     private fun onVideoStreamFound(
         index: Int,
         title: String,
@@ -100,6 +112,9 @@ class MediaInfoBuilder(private val context: Context) {
         }
     }
 
+    /* Used from JNI */
+    @Keep
+    @SuppressWarnings("UnusedPrivateMember")
     private fun onAudioStreamFound(
         index: Int,
         title: String,
@@ -128,6 +143,9 @@ class MediaInfoBuilder(private val context: Context) {
         )
     }
 
+    /* Used from JNI */
+    @Keep
+    @SuppressWarnings("UnusedPrivateMember")
     private fun onSubtitleStreamFound(
         index: Int,
         title: String,
@@ -146,8 +164,10 @@ class MediaInfoBuilder(private val context: Context) {
         )
     }
 
+    @Keep
     private external fun nativeCreateFromFD(fileDescriptor: Int)
 
+    @Keep
     private external fun nativeCreateFromPath(filePath: String)
 
     init {
