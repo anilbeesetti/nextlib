@@ -7,7 +7,7 @@ plugins {
 }
 
 android {
-    namespace = "io.github.anilbeesetti.nextlib.media3ext"
+    namespace = "io.github.anilbeesetti.nextlib.mediainfo"
 
     compileSdk = 34
 
@@ -57,11 +57,7 @@ val ffmpegSetup by tasks.registering(Exec::class) {
 tasks.preBuild.dependsOn(ffmpegSetup)
 
 dependencies {
-    implementation(libs.androidx.media3.exoplayer)
-    implementation(libs.google.errorprone.annotations)
     implementation(libs.androidx.annotation)
-    compileOnly(libs.checker.qual)
-    compileOnly(libs.kotlin.annotations.jvm)
 }
 
 afterEvaluate {
@@ -69,7 +65,7 @@ afterEvaluate {
         publications {
             create<MavenPublication>("mavenJava") {
                 groupId = "io.github.anilbeesetti"
-                artifactId = "nextlib-media3ext"
+                artifactId = "nextlib-mediainfo"
                 version = "1.0"
 
                 from(components["release"])
