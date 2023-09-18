@@ -3,11 +3,9 @@
 #include "utils.h"
 #include "log.h"
 
-
 extern "C" {
 #include "libavformat/avformat.h"
 #include "libavcodec/codec_desc.h"
-
 }
 
 static char *get_string(AVDictionary *metadata, const char *key) {
