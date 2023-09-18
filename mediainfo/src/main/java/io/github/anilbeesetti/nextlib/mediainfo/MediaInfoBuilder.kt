@@ -16,7 +16,6 @@ import java.io.FileNotFoundException
 class MediaInfoBuilder(private val context: Context) {
 
     private var hasError: Boolean = false
-    private var parcelFileDescriptor: ParcelFileDescriptor? = null
 
     private var fileFormatName: String? = null
     private var duration: Long? = null
@@ -34,17 +33,22 @@ class MediaInfoBuilder(private val context: Context) {
     }
 
     fun from(uri: Uri) = apply {
-        val path = PathUtil.getPath(context, uri)
-        if (path != null) {
-            from(path)
-        } else {
-            try {
-                val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
-                if (descriptor != null) {
-                    from(descriptor)
+        when {
+            uri.scheme?.lowercase()?.startsWith("http") == true -> from(uri.toString())
+            else -> {
+                val path = PathUtil.getPath(context, uri)
+                if (path != null) {
+                    from(path)
+                } else {
+                    try {
+                        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
+                        if (descriptor != null) {
+                            from(descriptor)
+                        }
+                    } catch (e: FileNotFoundException) {
+                        Log.w("error", e)
+                    }
                 }
-            } catch (e: FileNotFoundException) {
-                Log.w("error", e)
             }
         }
     }
@@ -185,8 +189,8 @@ internal object PathUtil {
         var uri = uri
         var selection: String? = null
         var selectionArgs: Array<String>? = null
-        // Uri is different in versions after KITKAT (Android 4.4), we need to
-        // deal with different Uris.
+
+
         if (DocumentsContract.isDocumentUri(context.applicationContext, uri)) {
             if (isExternalStorageDocument(uri)) {
                 val docId = DocumentsContract.getDocumentId(uri)

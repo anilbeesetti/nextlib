@@ -7,5 +7,3 @@ data class MediaInfo(
     val audioStreams: List<AudioStream>,
     val subtitleStreams: List<SubtitleStream>
 )
-
-
