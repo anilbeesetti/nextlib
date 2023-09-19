@@ -9,7 +9,7 @@ extern "C" {
 #include "frame_loader_context.h"
 #include "log.h"
 
-bool frame_extractor_load_frame(JNIEnv *env, int64_t jFrameLoaderContextHandle, jobject jBitmap) {
+bool frame_extractor_load_frame(JNIEnv *env, int64_t jFrameLoaderContextHandle, int64_t time_millis, jobject jBitmap) {
     AndroidBitmapInfo bitmapMetricInfo;
     AndroidBitmap_getInfo(env, jBitmap, &bitmapMetricInfo);
 
@@ -40,21 +40,27 @@ bool frame_extractor_load_frame(JNIEnv *env, int64_t jFrameLoaderContextHandle, 
                     AV_PIX_FMT_RGBA,
                     SWS_BICUBIC, nullptr, nullptr, nullptr);
 
-    AVStream *avVideoStream = videoStream->
-            avFormatContext->
-            streams[videoStream->videoStreamIndex];
+    AVStream *avVideoStream = videoStream->avFormatContext->streams[videoStream->videoStreamIndex];
 
     int64_t videoDuration = avVideoStream->duration;
-
     // In some cases the duration is of a video stream is set to Long.MIN_VALUE and we need compute it in another way
     if (videoDuration == LONG_LONG_MIN && avVideoStream->time_base.den != 0) {
         videoDuration = videoStream->avFormatContext->duration / avVideoStream->time_base.den;
     }
 
+
     AVPacket *packet = av_packet_alloc();
     AVFrame *frame = av_frame_alloc();
 
-    int64_t seekPosition = videoDuration / 2;
+    int64_t seekPosition = videoDuration / 3;
+
+    if (time_millis != -1) {
+        int64_t seek_time = av_rescale_q(time_millis, AV_TIME_BASE_Q, avVideoStream->time_base);
+        if (seek_time < videoDuration) {
+            seekPosition = seek_time;
+        }
+    }
+
     av_seek_frame(videoStream->avFormatContext,
                   videoStream->videoStreamIndex,
                   seekPosition,
@@ -132,8 +138,8 @@ extern "C"
 JNIEXPORT jboolean JNICALL
 Java_io_github_anilbeesetti_nextlib_mediainfo_FrameLoader_nativeLoadFrame(JNIEnv *env, jclass clazz,
                                                                           jlong jFrameLoaderContextHandle,
-                                                                          jlong duration_millis,
+                                                                          jlong time_millis,
                                                                           jobject jBitmap) {
-    bool successfullyLoaded = frame_extractor_load_frame(env, jFrameLoaderContextHandle, jBitmap);
+    bool successfullyLoaded = frame_extractor_load_frame(env, jFrameLoaderContextHandle, time_millis, jBitmap);
     return static_cast<jboolean>(successfullyLoaded);
 }

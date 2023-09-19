@@ -15,14 +15,17 @@ data class MediaInfo(
 
     val supportsFrameLoading: Boolean = frameLoader != null
 
-    fun getFrame(): Bitmap? {
+    /**
+     * Retrieves a video frame as a Bitmap at a specific duration in milliseconds from the video stream.
+     *
+     * @param durationMillis The timestamp in milliseconds at which to retrieve the video frame.
+     *                       If set to -1, the frame will be retrieved at one-third of the video's duration.
+     * @return A Bitmap containing the video frame if retrieval is successful, or null if an error occurs.
+     */
+    fun getFrame(durationMillis: Long = -1): Bitmap? {
         val bitmap = Bitmap.createBitmap(videoStream!!.frameWidth, videoStream.frameHeight, Bitmap.Config.ARGB_8888)
-        val result = frameLoader?.loadFrameInto(bitmap, this.duration / 3)
+        val result = frameLoader?.loadFrameInto(bitmap, durationMillis)
         return if (result == true) bitmap else null
-    }
-
-    fun getFrameAt(durationMillis: Long): Bitmap? {
-        return null
     }
 
     fun release() {

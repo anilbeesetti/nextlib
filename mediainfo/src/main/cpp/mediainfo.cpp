@@ -39,7 +39,7 @@ void onMediaInfoFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *a
                                     jMediaInfoBuilder,
                                     fields.MediaInfoBuilder.onMediaInfoFoundID,
                                     jFileFormatName,
-                                    avFormatContext->duration / 1000);
+                                    avFormatContext->duration);
 }
 
 bool onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
