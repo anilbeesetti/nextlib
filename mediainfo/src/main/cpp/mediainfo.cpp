@@ -42,7 +42,7 @@ void onMediaInfoFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *a
                                     avFormatContext->duration);
 }
 
-bool onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
+void onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
     AVStream *stream = avFormatContext->streams[index];
     AVCodecParameters *parameters = stream->codecpar;
 
@@ -81,8 +81,6 @@ bool onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext 
                                     parameters->width,
                                     parameters->height,
                                     frameLoaderContextHandle);
-
-    return frameLoaderContextHandle != -1;
 }
 
 void onAudioStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
@@ -152,13 +150,12 @@ void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
 
     onMediaInfoFound(env, jMediaInfoBuilder, avFormatContext);
 
-    bool hasSentContextHandle = true;
     for (int pos = 0; pos < avFormatContext->nb_streams; pos++) {
         AVCodecParameters *parameters = avFormatContext->streams[pos]->codecpar;
         AVMediaType type = parameters->codec_type;
         switch (type) {
             case AVMEDIA_TYPE_VIDEO:
-                hasSentContextHandle = onVideoStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
+                 onVideoStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
                 break;
             case AVMEDIA_TYPE_AUDIO:
                 onAudioStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
@@ -167,10 +164,6 @@ void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
                 onSubtitleStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
                 break;
         }
-    }
-
-    if (!hasSentContextHandle) {
-        avformat_close_input(&avFormatContext);
     }
 }
 
