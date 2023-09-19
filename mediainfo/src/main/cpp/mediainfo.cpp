@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include "utils.h"
 #include "log.h"
+#include "frame_loader_context.h"
 
 extern "C" {
 #include "libavformat/avformat.h"
@@ -41,11 +42,23 @@ void onMediaInfoFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *a
                                     avFormatContext->duration / 1000);
 }
 
-void onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
+bool onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
     AVStream *stream = avFormatContext->streams[index];
     AVCodecParameters *parameters = stream->codecpar;
 
     auto codecDescriptor = avcodec_descriptor_get(parameters->codec_id);
+
+    int64_t frameLoaderContextHandle = -1;
+    auto *decoder = avcodec_find_decoder(parameters->codec_id);
+    if (decoder != nullptr) {
+        auto *frameLoaderContext = (FrameLoaderContext *) malloc(sizeof(FrameLoaderContext));;
+        frameLoaderContext->avFormatContext = avFormatContext;
+        frameLoaderContext->parameters = parameters;
+        frameLoaderContext->avVideoCodec = decoder;
+        frameLoaderContext->videoStreamIndex = index;
+        frameLoaderContextHandle = frame_loader_context_to_handle(frameLoaderContext);
+    }
+
 
     AVRational guessedFrameRate = av_guess_frame_rate(avFormatContext, avFormatContext->streams[index], nullptr);
 
@@ -66,7 +79,10 @@ void onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext 
                                     parameters->bit_rate,
                                     resultFrameRate,
                                     parameters->width,
-                                    parameters->height);
+                                    parameters->height,
+                                    frameLoaderContextHandle);
+
+    return frameLoaderContextHandle != -1;
 }
 
 void onAudioStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
@@ -136,12 +152,13 @@ void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
 
     onMediaInfoFound(env, jMediaInfoBuilder, avFormatContext);
 
+    bool hasSentContextHandle = true;
     for (int pos = 0; pos < avFormatContext->nb_streams; pos++) {
         AVCodecParameters *parameters = avFormatContext->streams[pos]->codecpar;
         AVMediaType type = parameters->codec_type;
         switch (type) {
             case AVMEDIA_TYPE_VIDEO:
-                onVideoStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
+                hasSentContextHandle = onVideoStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
                 break;
             case AVMEDIA_TYPE_AUDIO:
                 onAudioStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
@@ -151,7 +168,10 @@ void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
                 break;
         }
     }
-    avformat_free_context(avFormatContext);
+
+    if (!hasSentContextHandle) {
+        avformat_close_input(&avFormatContext);
+    }
 }
 
 extern "C"
