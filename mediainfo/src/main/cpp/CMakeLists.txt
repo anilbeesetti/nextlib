@@ -16,7 +16,7 @@ set(
         # List variable name
         ffmpeg_libs_names
         # Values in the list
-        avcodec avformat avutil)
+        avcodec avformat avutil swscale)
 
 foreach (ffmpeg_lib_name ${ffmpeg_libs_names})
     add_library(
@@ -35,7 +35,9 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         # List C/C++ source files with relative paths to this CMakeLists.txt.
         main.cpp
         mediainfo.cpp
-        utils.cpp)
+        utils.cpp
+        frame_loader_context.cpp
+        frame_extractor.cpp)
 
 # Specifies libraries CMake should link to your target library. You
 # can link libraries from various origins, such as libraries defined in this
@@ -43,4 +45,5 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
 target_link_libraries(${CMAKE_PROJECT_NAME}
         # List libraries link to the target library
         log
+        jnigraphics
         ${ffmpeg_libs_names})

@@ -13,6 +13,7 @@ class MediaInfoBuilder(private val context: Context) {
 
     private var fileFormatName: String? = null
     private var duration: Long? = null
+    private var frameLoaderContextHandle: Long? = null
     private var videoStream: VideoStream? = null
     private var audioStreams = mutableListOf<AudioStream>()
     private var subtitleStreams = mutableListOf<SubtitleStream>()
@@ -54,7 +55,8 @@ class MediaInfoBuilder(private val context: Context) {
                 duration!!,
                 videoStream,
                 audioStreams,
-                subtitleStreams
+                subtitleStreams,
+                frameLoaderContextHandle
             )
         } else null
     }
@@ -94,6 +96,7 @@ class MediaInfoBuilder(private val context: Context) {
         frameRate: Double,
         frameWidth: Int,
         frameHeight: Int,
+        frameLoaderContext: Long
     ) {
         if (videoStream == null) {
             videoStream = VideoStream(
@@ -107,6 +110,9 @@ class MediaInfoBuilder(private val context: Context) {
                 frameWidth = frameWidth,
                 frameHeight = frameHeight
             )
+            if (frameLoaderContext != -1L) {
+                frameLoaderContextHandle = frameLoaderContext
+            }
         }
     }
 
