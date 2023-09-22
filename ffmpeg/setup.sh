@@ -138,10 +138,10 @@ function buildMbedTLS() {
 
     for ABI in $ANDROID_ABIS; do
 
-      CMAKE_BUILD_DIR=mbedtls_build_${ABI}
+      CMAKE_BUILD_DIR=$MBEDTLS_DIR/mbedtls_build_${ABI}
       rm -rf ${CMAKE_BUILD_DIR}
-      mkdir ${CMAKE_BUILD_DIR}
-      pushd ${CMAKE_BUILD_DIR}
+      mkdir -p ${CMAKE_BUILD_DIR}
+      cd ${CMAKE_BUILD_DIR}
 
       ${CMAKE_EXECUTABLE} .. \
        -DANDROID_PLATFORM=${ANDROID_PLATFORM} \
@@ -153,7 +153,6 @@ function buildMbedTLS() {
       make -j$JOBS
       make install
 
-      popd
     done
     popd
 }
