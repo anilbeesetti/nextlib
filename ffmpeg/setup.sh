@@ -36,7 +36,6 @@ esac
 # Build tools
 TOOLCHAIN_PREFIX="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/${HOST_PLATFORM}"
 CMAKE_EXECUTABLE=${ANDROID_SDK_HOME}/cmake/3.22.1/bin/cmake
-MAKE_EXECUTABLE=${ANDROID_NDK_HOME}/prebuilt/${HOST_TAG}/bin/make
 
 mkdir -p $SOURCES_DIR
 
@@ -261,14 +260,14 @@ function buildFfmpeg() {
 }
 
 if [[ ! -d "$OUTPUT_DIR" && ! -d "$BUILD_DIR" ]]; then
-  # Download Vpx source code if it doesn't exist
-  if [[ ! -d "$VPX_DIR" ]]; then
-    downloadLibVpx
-  fi
-
   # Download MbedTLS source code if it doesn't exist
   if [[ ! -d "$MBEDTLS_DIR" ]]; then
     downloadMbedTLS
+  fi
+
+  # Download Vpx source code if it doesn't exist
+  if [[ ! -d "$VPX_DIR" ]]; then
+    downloadLibVpx
   fi
 
   # Download Ffmpeg source code if it doesn't exist
@@ -277,7 +276,7 @@ if [[ ! -d "$OUTPUT_DIR" && ! -d "$BUILD_DIR" ]]; then
   fi
 
   # Building library
-  buildLibVpx
   buildMbedTLS
+  buildLibVpx
   buildFfmpeg
 fi
