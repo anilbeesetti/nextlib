@@ -44,6 +44,7 @@ function downloadLibVpx() {
   echo "Downloading Vpx source code of version $VPX_VERSION..."
   VPX_FILE=libvpx-$VPX_VERSION.tar.gz
   curl -L "https://github.com/webmproject/libvpx/archive/refs/tags/v${VPX_VERSION}.tar.gz" -o $VPX_FILE
+  [ -e $VPX_FILE ] || { echo "$VPX_FILE does not exist. Exiting..."; exit 1;
   tar -zxf $VPX_FILE
   rm $VPX_FILE
   popd
@@ -54,6 +55,7 @@ function downloadMbedTLS() {
   echo "Downloading mbedtls source code of version $MBEDTLS_VERSION..."
   MBEDTLS_FILE=mbedtls-$MBEDTLS_VERSION.tar.gz
   curl -L "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${MBEDTLS_VERSION}.tar.gz" -o $MBEDTLS_FILE
+  [ -e $MBEDTLS_FILE ] || { echo "$MBEDTLS_FILE does not exist. Exiting..."; exit 1;
   tar -zxf $MBEDTLS_FILE
   rm $MBEDTLS_FILE
   popd
@@ -64,6 +66,7 @@ function downloadFfmpeg() {
   echo "Downloading FFmpeg source code of version $FFMPEG_VERSION..."
   FFMPEG_FILE=ffmpeg-$FFMPEG_VERSION.tar.gz
   curl -L "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" -o $FFMPEG_FILE
+  [ -e $FFMPEG_FILE ] || { echo "$FFMPEG_FILE does not exist. Exiting..."; exit 1;
   tar -zxf $FFMPEG_FILE
   rm $FFMPEG_FILE
   popd
