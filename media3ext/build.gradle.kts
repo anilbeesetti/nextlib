@@ -50,6 +50,7 @@ android {
 val ffmpegSetup by tasks.registering(Exec::class) {
     workingDir = file("../ffmpeg")
     // export ndk path and run bash script
+    environment("ANDROID_SDK_HOME", android.sdkDirectory.absolutePath)
     environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
     commandLine("bash", "setup.sh")
 }
