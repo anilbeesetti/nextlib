@@ -91,12 +91,13 @@ void onAudioStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext 
 
     auto avSampleFormat = static_cast<AVSampleFormat>(parameters->format);
     auto jSampleFormat = env->NewStringUTF(av_get_sample_fmt_name(avSampleFormat));
+    char chLayoutDescription[128];
+    av_channel_layout_describe(&parameters->ch_layout, chLayoutDescription, sizeof(chLayoutDescription));
 
     jstring jTitle = env->NewStringUTF(get_title(stream->metadata));
     jstring jCodecName = env->NewStringUTF(codecDescriptor->long_name);
     jstring jLanguage = env->NewStringUTF(get_language(stream->metadata));
-
-    // TODO: Channel layout
+    jstring jChannelLayout = env->NewStringUTF(chLayoutDescription);
 
     utils_call_instance_method_void(env,
                                     jMediaInfoBuilder,
@@ -110,7 +111,7 @@ void onAudioStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext 
                                     jSampleFormat,
                                     parameters->sample_rate,
                                     parameters->ch_layout.nb_channels,
-                                    jCodecName);
+                                    jChannelLayout);
 }
 
 void onSubtitleStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
