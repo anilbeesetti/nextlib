@@ -9,6 +9,30 @@ extern "C" {
 #include "frame_loader_context.h"
 #include "log.h"
 
+bool read_frame(FrameLoaderContext *frameLoaderContext, AVPacket *packet, AVFrame *frame, AVCodecContext *videoCodecContext) {
+    while (av_read_frame(frameLoaderContext->avFormatContext, packet) >= 0) {
+        if (packet->stream_index != frameLoaderContext->videoStreamIndex) {
+            continue;
+        }
+        int response = avcodec_send_packet(videoCodecContext, packet);
+        if (response < 0) {
+            break;
+        }
+        response = avcodec_receive_frame(videoCodecContext, frame);
+
+        if (response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
+            continue;
+        } else if (response < 0) {
+            break;
+        }
+
+        av_packet_unref(packet);
+        return true;
+    }
+    return false;
+}
+
+
 bool frame_extractor_load_frame(JNIEnv *env, int64_t jFrameLoaderContextHandle, int64_t time_millis, jobject jBitmap) {
     AndroidBitmapInfo bitmapMetricInfo;
     AndroidBitmap_getInfo(env, jBitmap, &bitmapMetricInfo);
@@ -59,36 +83,23 @@ bool frame_extractor_load_frame(JNIEnv *env, int64_t jFrameLoaderContextHandle, 
         }
     }
 
+    AVCodecContext *videoCodecContext = avcodec_alloc_context3(frameLoaderContext->avVideoCodec);
+    avcodec_parameters_to_context(videoCodecContext, frameLoaderContext->parameters);
+    avcodec_open2(videoCodecContext, frameLoaderContext->avVideoCodec, nullptr);
+
     av_seek_frame(frameLoaderContext->avFormatContext,
                   frameLoaderContext->videoStreamIndex,
                   seekPosition,
                   0);
 
-    AVCodecContext *videoCodecContext = avcodec_alloc_context3(frameLoaderContext->avVideoCodec);
-    avcodec_parameters_to_context(videoCodecContext, frameLoaderContext->parameters);
-    avcodec_open2(videoCodecContext, frameLoaderContext->avVideoCodec, nullptr);
+    bool resultValue = read_frame(frameLoaderContext, packet, frame, videoCodecContext);
 
-    bool resultValue = false;
-
-    while (av_read_frame(frameLoaderContext->avFormatContext, packet) >= 0) {
-        if (packet->stream_index != frameLoaderContext->videoStreamIndex) {
-            continue;
-        }
-        int response = avcodec_send_packet(videoCodecContext, packet);
-        if (response < 0) {
-            break;
-        }
-        response = avcodec_receive_frame(videoCodecContext, frame);
-
-        if (response == AVERROR(EAGAIN) || response == AVERROR_EOF) {
-            continue;
-        } else if (response < 0) {
-            break;
-        }
-
-        resultValue = true;
-        av_packet_unref(packet);
-        break;
+    if (!resultValue) {
+        av_seek_frame(frameLoaderContext->avFormatContext,
+                      frameLoaderContext->videoStreamIndex,
+                      0,
+                      0);
+        resultValue = read_frame(frameLoaderContext, packet, frame, videoCodecContext);
     }
 
     if (resultValue) {
