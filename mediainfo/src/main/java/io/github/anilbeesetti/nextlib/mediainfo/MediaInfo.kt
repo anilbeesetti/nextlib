@@ -23,7 +23,8 @@ data class MediaInfo(
      * @return A Bitmap containing the video frame if retrieval is successful, or null if an error occurs.
      */
     fun getFrame(durationMillis: Long = -1): Bitmap? {
-        val bitmap = Bitmap.createBitmap(videoStream!!.frameWidth, videoStream.frameHeight, Bitmap.Config.ARGB_8888)
+        if (videoStream == null) return null
+        val bitmap = Bitmap.createBitmap(videoStream.frameWidth.takeIf { it > 0 } ?: 1920, videoStream.frameHeight.takeIf { it > 0 } ?: 1080, Bitmap.Config.ARGB_8888)
         val result = frameLoader?.loadFrameInto(bitmap, durationMillis)
         return if (result == true) bitmap else null
     }
