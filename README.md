@@ -8,18 +8,53 @@ NextLib is a library for adding ffmpeg codecs to [Media3](https://github.com/and
 - **Audio**: Vorbis, Opus, Flac, Alac, pcm_mulaw, pcm_alaw, MP3, Amrnb, Amrwb, AAC, AC3, EAC3, dca, mlp, truehd
 - **Video**: H.264, HEVC, VP8, VP9
 
-## Usage
+## Setup
 
 NextLib is available at JitPack's Maven repo.
 
-If you're using Gradle, you could add NextLib as a dependency with the following steps:
+First, you have to add the jitpack's maven repo to your build.gradle
 
-1. Add `maven { url 'https://jitpack.io' }` to the `repositories` in your `build.gradle`.
-2. Add `implementation 'com.github.anilbeesetti:nextlib:INSERT_VERSION_HERE'` to the `dependencies` in your `build.gradle`. Replace `INSERT_VERSION_HERE` with the [latest release](https://github.com/anilbeesetti/nextlib/releases/latest).
+Kotlin DSL:
 
-To use Ffmpeg decoders in your app, Add `NextRenderersFactory` to `ExoPlayer`
 ```kotlin
-val renderersFactory = NextRenderersFactory(applicationContext) // NextRenderersFactory is one to one compatible with DefaultRenderersFactory
+repositories {
+    maven { url = uri("https://jitpack.io") }
+}
+```
+
+Groovy DSL:
+
+```gradle
+repositories {
+    maven { url 'https://jitpack.io' }
+}
+```
+
+Now, you have to add the dependency to nextlib in your build.gradle
+
+Kotlin DSL:
+
+```kotlin
+dependencies {
+    implementation("com.github.anilbeesetti.nextlib:nextlib-media3ext:INSERT_VERSION_HERE") // To add media3 software decoders and extensions
+    implementation("com.github.anilbeesetti.nextlib:nextlib-mediainfo:INSERT_VERSION_HERE") // To get media info through ffmpeg
+}
+```
+
+Groovy DSL:
+
+```gradle
+dependencies {
+    implementation "com.github.anilbeesetti.nextlib:nextlib-media3ext:INSERT_VERSION_HERE" // To add media3 software decoders and extensions
+    implementation "com.github.anilbeesetti.nextlib:nextlib-mediainfo:INSERT_VERSION_HERE" // To get media info through ffmpeg
+}
+```
+
+## Usage
+
+To use Ffmpeg decoders in your app, Add `NextRenderersFactory` (is one to one compatible with DefaultRenderersFactory) to `ExoPlayer`
+```kotlin
+val renderersFactory = NextRenderersFactory(applicationContext) 
 
 ExoPlayer.Builder(applicationContext)
     .setRenderersFactory(renderersFactory)
