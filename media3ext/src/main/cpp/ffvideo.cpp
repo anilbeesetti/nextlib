@@ -168,6 +168,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     if (context) {
         sws_freeContext(jniContext->swsContext);
         releaseContext(context);
+        delete jniContext;
     }
 }
 
