@@ -8,6 +8,7 @@ data class MediaInfo(
     val videoStream: VideoStream?,
     val audioStreams: List<AudioStream>,
     val subtitleStreams: List<SubtitleStream>,
+    val chapters: List<Chapter>,
     private val frameLoaderContext: Long?
 ) {
 

@@ -7,7 +7,7 @@ import android.util.Log
 import androidx.annotation.Keep
 import java.io.FileNotFoundException
 
-class MediaInfoBuilder(private val context: Context) {
+class MediaInfoBuilder(private val context: Context?) {
 
     private var hasError: Boolean = false
 
@@ -15,8 +15,9 @@ class MediaInfoBuilder(private val context: Context) {
     private var duration: Long? = null
     private var frameLoaderContextHandle: Long? = null
     private var videoStream: VideoStream? = null
-    private var audioStreams = mutableListOf<AudioStream>()
-    private var subtitleStreams = mutableListOf<SubtitleStream>()
+    private val audioStreams = mutableListOf<AudioStream>()
+    private val subtitleStreams = mutableListOf<SubtitleStream>()
+    private val chapters = mutableListOf<Chapter>()
 
 
     fun from(filePath: String) = apply {
@@ -31,7 +32,7 @@ class MediaInfoBuilder(private val context: Context) {
         when {
             uri.scheme?.lowercase()?.startsWith("http") == true -> from(uri.toString())
             else -> {
-                val path = PathUtil.getPath(context, uri)
+                val path = PathUtil.getPath(context!!, uri)
                 if (path != null) {
                     from(path)
                 } else {
@@ -56,6 +57,7 @@ class MediaInfoBuilder(private val context: Context) {
                 videoStream,
                 audioStreams,
                 subtitleStreams,
+                chapters,
                 frameLoaderContextHandle
             )
         } else null
@@ -164,6 +166,25 @@ class MediaInfoBuilder(private val context: Context) {
                 codecName = codecName,
                 language = language,
                 disposition = disposition
+            )
+        )
+    }
+
+    /* Used from JNI */
+    @Keep
+    @SuppressWarnings("UnusedPrivateMember")
+    private fun onChapterFound(
+        index: Int,
+        start: Long,
+        end: Long,
+        title: String?,
+    ) {
+        chapters.add(
+            Chapter(
+                index = index,
+                start = start,
+                end = end,
+                title = title,
             )
         )
     }
