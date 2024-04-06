@@ -33,13 +33,14 @@ static void onError(JNIEnv *env, jobject jMediaInfoBuilder) {
 void onMediaInfoFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext) {
     const char *fileFormatName = avFormatContext->iformat->long_name;
 
+    long duration_ms = (long) (avFormatContext->duration * av_q2d(AV_TIME_BASE_Q) * 1000.0);
     jstring jFileFormatName = env->NewStringUTF(fileFormatName);
 
     utils_call_instance_method_void(env,
                                     jMediaInfoBuilder,
                                     fields.MediaInfoBuilder.onMediaInfoFoundID,
                                     jFileFormatName,
-                                    avFormatContext->duration);
+                                    duration_ms);
 }
 
 void onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
@@ -134,6 +135,23 @@ void onSubtitleStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatConte
                                     stream->disposition);
 }
 
+void onChapterFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
+    AVChapter *chapter = avFormatContext->chapters[index];
+
+    double time_base =  av_q2d(chapter->time_base);
+    long start_ms = (long) (chapter->start * time_base * 1000.0);
+    long end_ms = (long) (chapter->end * time_base * 1000.0);
+    jstring jTitle = env->NewStringUTF(get_title(chapter->metadata));
+
+    utils_call_instance_method_void(env,
+                                    jMediaInfoBuilder,
+                                    fields.MediaInfoBuilder.onChapterFoundID,
+                                    index,
+                                    start_ms,
+                                    end_ms,
+                                    jTitle);
+}
+
 void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
     AVFormatContext *avFormatContext = nullptr;
     if (int result = avformat_open_input(&avFormatContext, uri, nullptr, nullptr)) {
@@ -165,6 +183,10 @@ void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
                 onSubtitleStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
                 break;
         }
+    }
+
+    for (int pos = 0; pos < avFormatContext->nb_chapters; pos++) {
+        onChapterFound(env, jMediaInfoBuilder, avFormatContext, pos);
     }
 }
 

@@ -77,6 +77,12 @@ int utils_fields_init(JavaVM *vm) {
            "onSubtitleStreamFound", "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;I)V"
     );
 
+    GET_ID(GetMethodID,
+               fields.MediaInfoBuilder.onChapterFoundID,
+               fields.MediaInfoBuilder.clazz,
+               "onChapterFound", "(IJJLjava/lang/String;)V"
+        );
+
     return 0;
 }
 
