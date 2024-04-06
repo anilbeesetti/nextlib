@@ -7,7 +7,7 @@ import android.util.Log
 import androidx.annotation.Keep
 import java.io.FileNotFoundException
 
-class MediaInfoBuilder(private val context: Context?) {
+class MediaInfoBuilder {
 
     private var hasError: Boolean = false
 
@@ -28,11 +28,11 @@ class MediaInfoBuilder(private val context: Context?) {
         nativeCreateFromFD(descriptor.fd)
     }
 
-    fun from(uri: Uri) = apply {
+    fun from(context: Context, uri: Uri) = apply {
         when {
             uri.scheme?.lowercase()?.startsWith("http") == true -> from(uri.toString())
             else -> {
-                val path = PathUtil.getPath(context!!, uri)
+                val path = PathUtil.getPath(context, uri)
                 if (path != null) {
                     from(path)
                 } else {
