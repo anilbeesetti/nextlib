@@ -188,6 +188,8 @@ void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
     for (int pos = 0; pos < avFormatContext->nb_chapters; pos++) {
         onChapterFound(env, jMediaInfoBuilder, avFormatContext, pos);
     }
+
+    avformat_close_input(&avFormatContext);
 }
 
 extern "C"
