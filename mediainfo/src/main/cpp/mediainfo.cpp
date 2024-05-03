@@ -138,18 +138,18 @@ void onSubtitleStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatConte
 void onChapterFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext, int index) {
     AVChapter *chapter = avFormatContext->chapters[index];
 
+    jstring jTitle = env->NewStringUTF(get_title(chapter->metadata));
     double time_base =  av_q2d(chapter->time_base);
     long start_ms = (long) (chapter->start * time_base * 1000.0);
     long end_ms = (long) (chapter->end * time_base * 1000.0);
-    jstring jTitle = env->NewStringUTF(get_title(chapter->metadata));
 
     utils_call_instance_method_void(env,
                                     jMediaInfoBuilder,
                                     fields.MediaInfoBuilder.onChapterFoundID,
                                     index,
+                                    jTitle,
                                     start_ms,
-                                    end_ms,
-                                    jTitle);
+                                    end_ms);
 }
 
 void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
