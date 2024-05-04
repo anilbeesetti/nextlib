@@ -66,7 +66,12 @@ void onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext 
     double resultFrameRate = guessedFrameRate.den == 0 ? 0.0 : guessedFrameRate.num / (double) guessedFrameRate.den;
 
     jstring jTitle = env->NewStringUTF(get_title(stream->metadata));
-    jstring jCodecName = env->NewStringUTF(codecDescriptor->long_name);
+    jstring jCodecName;
+    if (codecDescriptor != nullptr) {
+        jCodecName = env->NewStringUTF(codecDescriptor->long_name);
+    } else {
+        jCodecName = env->NewStringUTF("Unknown Codec");
+    }
     jstring jLanguage = env->NewStringUTF(get_language(stream->metadata));
 
     utils_call_instance_method_void(env,
@@ -96,7 +101,12 @@ void onAudioStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext 
     av_channel_layout_describe(&parameters->ch_layout, chLayoutDescription, sizeof(chLayoutDescription));
 
     jstring jTitle = env->NewStringUTF(get_title(stream->metadata));
-    jstring jCodecName = env->NewStringUTF(codecDescriptor->long_name);
+    jstring jCodecName;
+    if (codecDescriptor != nullptr) {
+        jCodecName = env->NewStringUTF(codecDescriptor->long_name);
+    } else {
+        jCodecName = env->NewStringUTF("Unknown Codec");
+    }
     jstring jLanguage = env->NewStringUTF(get_language(stream->metadata));
     jstring jChannelLayout = env->NewStringUTF(chLayoutDescription);
 
@@ -122,7 +132,12 @@ void onSubtitleStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatConte
     auto codecDescriptor = avcodec_descriptor_get(parameters->codec_id);
 
     jstring jTitle = env->NewStringUTF(get_title(stream->metadata));
-    jstring jCodecName = env->NewStringUTF(codecDescriptor->long_name);
+    jstring jCodecName;
+    if (codecDescriptor != nullptr) {
+        jCodecName = env->NewStringUTF(codecDescriptor->long_name);
+    } else {
+        jCodecName = env->NewStringUTF("Unknown Codec");
+    }
     jstring jLanguage = env->NewStringUTF(get_language(stream->metadata));
 
     utils_call_instance_method_void(env,
