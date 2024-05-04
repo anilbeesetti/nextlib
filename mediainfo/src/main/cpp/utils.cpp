@@ -78,10 +78,10 @@ int utils_fields_init(JavaVM *vm) {
     );
 
     GET_ID(GetMethodID,
-               fields.MediaInfoBuilder.onChapterFoundID,
-               fields.MediaInfoBuilder.clazz,
-               "onChapterFound", "(IJJLjava/lang/String;)V"
-        );
+           fields.MediaInfoBuilder.onChapterFoundID,
+           fields.MediaInfoBuilder.clazz,
+           "onChapterFound", "(ILjava/lang/String;JJ)V"
+    );
 
     return 0;
 }

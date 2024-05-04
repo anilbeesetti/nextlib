@@ -175,9 +175,9 @@ class MediaInfoBuilder {
     @SuppressWarnings("UnusedPrivateMember")
     private fun onChapterFound(
         index: Int,
+        title: String?,
         start: Long,
         end: Long,
-        title: String?,
     ) {
         chapters.add(
             Chapter(
