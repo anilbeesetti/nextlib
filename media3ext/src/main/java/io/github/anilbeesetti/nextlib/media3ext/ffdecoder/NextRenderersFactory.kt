@@ -13,7 +13,7 @@ import androidx.media3.exoplayer.video.VideoRendererEventListener
 
 
 @UnstableApi
-class NextRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
+open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
 
     override fun buildAudioRenderers(
         context: Context,
