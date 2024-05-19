@@ -47,9 +47,7 @@ NASM_EXECUTABLE=$(which nasm)
 
 export FAM_CC=${TOOLCHAIN_PREFIX}/bin/${TARGET}-clang
 export FAM_CXX=${FAM_CC}++
-export FAM_LD=${FAM_CC}
-
-# Forcing FFmpeg and its dependencies to look for dependencies
+export FAM_LD=${FAM_CC}# Forcing FFmpeg and its dependencies to look for dependencies
 # in a specific directory when pkg-config is used
 export PKG_CONFIG_LIBDIR=$BUILD_DIR/external/lib/pkgconfig
 
@@ -303,6 +301,10 @@ function buildFfmpeg() {
       exit 1
       ;;
     esac
+
+    # Forcing FFmpeg and its dependencies to look for dependencies
+    # in a specific directory when pkg-config is used
+    export PKG_CONFIG_LIBDIR=$BUILD_DIR/external/$ABI/lib/pkgconfig
 
     # Referencing dependencies without pkgconfig
     DEP_CFLAGS="-I$BUILD_DIR/external/$ABI/include"
