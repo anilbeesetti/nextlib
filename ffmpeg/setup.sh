@@ -42,7 +42,7 @@ CMAKE_EXECUTABLE=${ANDROID_SDK_HOME}/cmake/3.22.1/bin/cmake
 NINJA_EXECUTABLE=$(which ninja)
 # Meson is used for libdav1d building. Needs to be installed
 MESON_EXECUTABLE=$(which meson)
-
+# Nasm is used for libdav1d building. Needs to be installed
 NASM_EXECUTABLE=$(which nasm)
 
 export FAM_CC=${TOOLCHAIN_PREFIX}/bin/${TARGET}-clang
