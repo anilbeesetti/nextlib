@@ -150,7 +150,7 @@ bool frame_extractor_load_frame(JNIEnv *env, int64_t jFrameLoaderContextHandle, 
                     av_image_alloc(rotatedFrame->data, rotatedFrame->linesize,
                                    swapDimensions ? frame->height : frame->width,
                                    swapDimensions ? frame->width : frame->height,
-                                   AV_PIX_FMT_YUV420P, 1);
+                                   pixelFormat, 1);
 
                     // Perform rotation
                     for (int plane = 0; plane < 3; plane++) {
@@ -178,8 +178,7 @@ bool frame_extractor_load_frame(JNIEnv *env, int64_t jFrameLoaderContextHandle, 
                                         dst_y = i;
                                         break;
                                 }
-                                rotatedFrame->data[plane][dst_y * rotatedFrame->linesize[plane] +
-                                                          dst_x] =
+                                rotatedFrame->data[plane][dst_y * rotatedFrame->linesize[plane] + dst_x] =
                                         frame->data[plane][src_y * frame->linesize[plane] + src_x];
                             }
                         }
@@ -193,7 +192,6 @@ bool frame_extractor_load_frame(JNIEnv *env, int64_t jFrameLoaderContextHandle, 
                     av_freep(&rotatedFrame->data[0]);
                     av_frame_free(&rotatedFrame);
                 } else {
-                    // If rotation fails, use original frame
                     sws_scale(scalingContext, frame->data, frame->linesize, 0,
                               frame->height, frameForDrawing->data, frameForDrawing->linesize);
                 }
