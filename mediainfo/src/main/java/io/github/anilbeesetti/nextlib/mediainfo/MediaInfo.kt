@@ -27,11 +27,29 @@ data class MediaInfo(
         if (videoStream == null) return null
         val bitmap = Bitmap.createBitmap(videoStream.frameWidth.takeIf { it > 0 } ?: 1920, videoStream.frameHeight.takeIf { it > 0 } ?: 1080, Bitmap.Config.ARGB_8888)
         val result = frameLoader?.loadFrameInto(bitmap, durationMillis)
-        return if (result == true) bitmap else null
+        return if (result == true) bitmap.rotate(videoStream.rotation) else null
+    }
+
+    /**
+     * Retrieves a video frame as a Bitmap at a specific duration in milliseconds from the video stream.
+     *
+     * @param durationMillis The timestamp in milliseconds at which to retrieve the video frame.
+     *                       If set to -1, the frame will be retrieved at one-third of the video's duration.
+     * @return A Bitmap containing the video frame if retrieval is successful, or null if an error occurs.
+     */
+    fun getFrameAt(durationMillis: Long = -1): Bitmap? {
+        if (videoStream == null) return null
+        return frameLoader?.getFrame(durationMillis)?.rotate(videoStream.rotation)
     }
 
     fun release() {
         frameLoader?.release()
         frameLoader = null
     }
+}
+
+private fun Bitmap.rotate(degrees: Int): Bitmap {
+    val matrix = android.graphics.Matrix()
+    matrix.postRotate(degrees.toFloat())
+    return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
 }

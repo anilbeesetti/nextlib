@@ -9,5 +9,6 @@ data class VideoStream(
     val bitRate: Long,
     val frameRate: Double,
     val frameWidth: Int,
-    val frameHeight: Int
+    val frameHeight: Int,
+    val rotation: Int,
 )

@@ -9,6 +9,11 @@ class FrameLoader internal constructor(private var frameLoaderContextHandle: Lon
         return nativeLoadFrame(frameLoaderContextHandle, durationMillis, bitmap)
     }
 
+    fun getFrame(durationMillis: Long): Bitmap? {
+        require(frameLoaderContextHandle != -1L)
+        return nativeGetFrame(frameLoaderContextHandle, durationMillis)
+    }
+
     fun release() {
         nativeRelease(frameLoaderContextHandle)
         frameLoaderContextHandle = -1
@@ -20,5 +25,8 @@ class FrameLoader internal constructor(private var frameLoaderContextHandle: Lon
 
         @JvmStatic
         private external fun nativeLoadFrame(handle: Long, durationMillis: Long, bitmap: Bitmap): Boolean
+
+        @JvmStatic
+        private external fun nativeGetFrame(handle: Long, durationMillis: Long): Bitmap?
     }
 }
