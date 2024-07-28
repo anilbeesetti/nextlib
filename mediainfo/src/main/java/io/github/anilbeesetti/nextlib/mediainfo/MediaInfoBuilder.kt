@@ -98,6 +98,7 @@ class MediaInfoBuilder {
         frameRate: Double,
         frameWidth: Int,
         frameHeight: Int,
+        rotation: Int,
         frameLoaderContext: Long
     ) {
         if (videoStream == null) {
@@ -110,7 +111,8 @@ class MediaInfoBuilder {
                 bitRate = bitRate,
                 frameRate = frameRate,
                 frameWidth = frameWidth,
-                frameHeight = frameHeight
+                frameHeight = frameHeight,
+                rotation = rotation
             )
             if (frameLoaderContext != -1L) {
                 frameLoaderContextHandle = frameLoaderContext
