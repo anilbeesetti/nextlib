@@ -3,7 +3,6 @@ package io.github.anilbeesetti.nextlib.media3ext.ffdecoder;
 import static androidx.media3.common.util.Assertions.checkNotNull;
 
 import android.annotation.SuppressLint;
-import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
