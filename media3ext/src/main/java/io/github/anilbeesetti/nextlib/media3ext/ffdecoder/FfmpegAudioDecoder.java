@@ -4,6 +4,7 @@ import static androidx.media3.common.util.Assertions.checkNotNull;
 
 import android.annotation.SuppressLint;
 
+import androidx.annotation.Keep;
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
@@ -136,6 +137,7 @@ final class FfmpegAudioDecoder
 
   // Called from native code
   /** @noinspection unused*/
+  @Keep
   private ByteBuffer growOutputBuffer(SimpleDecoderOutputBuffer outputBuffer, int requiredSize) {
     // Use it for new buffer so that hopefully we won't need to reallocate again
     outputBufferSize = requiredSize;
