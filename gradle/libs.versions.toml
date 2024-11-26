@@ -4,7 +4,7 @@ kotlin = "2.0.10"
 androidxMedia3 = "1.5.0"
 checkerQual = "3.46.0"
 googleErrorProne = "2.29.2"
-androidxAnnotation = "1.8.2"
+androidxAnnotation = "1.9.1"
 
 [libraries]
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
