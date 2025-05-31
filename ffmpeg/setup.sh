@@ -35,10 +35,11 @@ esac
 
 # Build tools
 TOOLCHAIN_PREFIX="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/${HOST_PLATFORM}"
-CMAKE_EXECUTABLE="${ANDROID_SDK_HOME}/cmake/3.22.1/bin/cmake"
+CMAKE_EXECUTABLE="${ANDROID_SDK_HOME}/cmake/${ANDROID_CMAKE_VERSION}/bin/cmake"
 
 ls -la "${ANDROID_SDK_HOME}"
 ls -la "${ANDROID_SDK_HOME}/cmake"
+echo "Using CMake version: ${ANDROID_CMAKE_VERSION}"
 
 mkdir -p $SOURCES_DIR
 

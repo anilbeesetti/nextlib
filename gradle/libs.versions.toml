@@ -5,6 +5,8 @@ androidxMedia3 = "1.7.1"
 checkerQual = "3.48.3"
 googleErrorProne = "2.36.0"
 androidxAnnotation = "1.9.1"
+cmake = "4.0.2"
+ndk = "28.1.13356709"
 
 [libraries]
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
