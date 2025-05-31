@@ -38,7 +38,7 @@ TOOLCHAIN_PREFIX="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/${HOST_PLATFORM}"
 CMAKE_EXECUTABLE="${ANDROID_SDK_HOME}/cmake/3.22.1/bin/cmake"
 
 ls -la "${ANDROID_SDK_HOME}"
-ls -la "${ANDROID_NDK_HOME}/cmake"
+ls -la "${ANDROID_SDK_HOME}/cmake"
 
 mkdir -p $SOURCES_DIR
 
