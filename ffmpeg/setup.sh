@@ -98,7 +98,7 @@ fi
 
 # Check for required tools
 command -v curl >/dev/null 2>&1 || { log_error "curl is required but not installed. Aborting."; exit 1; }
-command -v yasm >/dev/null 2>&1 || { log_warning "yasm is not installed. Aborting."; exit 1; }
+command -v yasm >/dev/null 2>&1 || { log_warning "yasm is not installed. This might cause issues."; }
 command -v pkg-config >/dev/null 2>&1 || { log_warning "pkg-config is not installed. This might cause issues."; }
 
 # Build tools
