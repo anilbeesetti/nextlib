@@ -55,7 +55,7 @@ val ffmpegSetup by tasks.registering(Exec::class) {
     commandLine("bash", "setup.sh")
 }
 
-tasks.preBuild.dependsOn(ffmpegSetup)
+//tasks.preBuild.dependsOn(ffmpegSetup)
 
 dependencies {
     implementation(libs.androidx.annotation)
