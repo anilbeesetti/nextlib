@@ -36,10 +36,15 @@ esac
 # Build tools
 TOOLCHAIN_PREFIX="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/${HOST_PLATFORM}"
 CMAKE_EXECUTABLE="${ANDROID_SDK_HOME}/cmake/${ANDROID_CMAKE_VERSION}/bin/cmake"
+SDKMANAGER_EXECUTABLE="${ANDROID_SDK_HOME}/cmdline-tools/latest/bin/sdkmanager"
 
-ls -la "${ANDROID_SDK_HOME}"
-ls -la "${ANDROID_SDK_HOME}/cmake"
-echo "Using CMake version: ${ANDROID_CMAKE_VERSION}"
+# install cmake version if SKDMANAGER_EXECUTABLE exists
+if [[ -x "$SDKMANAGER_EXECUTABLE" ]]; then
+  SDKMANAGER_EXECUTABLE --install "cmake;${ANDROID_CMAKE_VERSION}" || {
+    echo "Failed to install CMake version ${ANDROID_CMAKE_VERSION}. Exiting..."
+    exit 1
+  }
+fi
 
 mkdir -p $SOURCES_DIR
 

@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "io.github.anilbeesetti.nextlib.media3ext"
-    compileSdk = 35
+    compileSdk = libs.versions.androidCompileSdk.get().toInt()
     ndkVersion = libs.versions.ndk.get()
 
     defaultConfig {
