@@ -9,7 +9,7 @@ plugins {
 android {
     namespace = "io.github.anilbeesetti.nextlib.mediainfo"
 
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
 
