@@ -39,7 +39,7 @@ CMAKE_EXECUTABLE="${ANDROID_SDK_HOME}/cmake/${ANDROID_CMAKE_VERSION}/bin/cmake"
 SDKMANAGER_EXECUTABLE="${ANDROID_SDK_HOME}/cmdline-tools/latest/bin/sdkmanager"
 
 # install cmake version if SKDMANAGER_EXECUTABLE exists
-if [[ -x "$SDKMANAGER_EXECUTABLE" ]]; then
+if [[ -e "$SDKMANAGER_EXECUTABLE" ]]; then
   SDKMANAGER_EXECUTABLE --install "cmake;${ANDROID_CMAKE_VERSION}" || {
     echo "Failed to install CMake version ${ANDROID_CMAKE_VERSION}. Exiting..."
     exit 1
