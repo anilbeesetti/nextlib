@@ -36,9 +36,23 @@ esac
 # Build tools
 TOOLCHAIN_PREFIX="${ANDROID_NDK_HOME}/toolchains/llvm/prebuilt/${HOST_PLATFORM}"
 CMAKE_EXECUTABLE="${ANDROID_SDK_HOME}/cmake/${ANDROID_CMAKE_VERSION}/bin/cmake"
-SDKMANAGER_EXECUTABLE="${ANDROID_SDK_HOME}/cmdline-tools/latest/bin/sdkmanager"
 
-echo y | sdkmanager --sdk_root="${ANDROID_SDK_HOME}" "cmake;${ANDROID_CMAKE_VERSION}"
+# Check if sdkmanager is in PATH
+if command -v sdkmanager &> /dev/null; then
+  # Use sdkmanager from PATH
+  echo "Using sdkmanager from PATH"
+  echo y | sdkmanager --sdk_root="${ANDROID_SDK_HOME}" "cmake;${ANDROID_CMAKE_VERSION}"
+else
+  # Use sdkmanager from Android SDK
+  SDKMANAGER_EXECUTABLE="${ANDROID_SDK_HOME}/cmdline-tools/latest/bin/sdkmanager"
+  if [[ -x "$SDKMANAGER_EXECUTABLE" ]]; then
+    echo "Using sdkmanager from Android SDK"
+    echo y | "$SDKMANAGER_EXECUTABLE" --sdk_root="${ANDROID_SDK_HOME}" "cmake;${ANDROID_CMAKE_VERSION}"
+  else
+    echo "Error: sdkmanager not found in PATH or Android SDK"
+    exit 1
+  fi
+fi
 
 mkdir -p $SOURCES_DIR
 
