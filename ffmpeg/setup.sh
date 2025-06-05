@@ -127,6 +127,7 @@ function buildLibVpx() {
       AS=${VPX_AS} \
       STRIP=${TOOLCHAIN_PREFIX}/bin/llvm-strip \
       NM=${TOOLCHAIN_PREFIX}/bin/llvm-nm \
+      LDFLAGS="-Wl,-z,max-page-size=16384" \
       ./configure \
       --prefix=$BUILD_DIR/external/$ABI \
       --libc="${TOOLCHAIN_PREFIX}/sysroot" \
@@ -167,6 +168,7 @@ function buildMbedTLS() {
        -DANDROID_ABI=$ABI \
        -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
        -DCMAKE_INSTALL_PREFIX=$BUILD_DIR/external/$ABI \
+       -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
        -DENABLE_TESTING=0
 
       make -j$JOBS
@@ -234,7 +236,7 @@ function buildFfmpeg() {
       --ranlib="${TOOLCHAIN_PREFIX}/bin/llvm-ranlib" \
       --strip="${TOOLCHAIN_PREFIX}/bin/llvm-strip" \
       --extra-cflags="-O3 -fPIC $DEP_CFLAGS" \
-      --extra-ldflags="$DEP_LD_FLAGS" \
+      --extra-ldflags="$DEP_LD_FLAGS -Wl,-z,max-page-size=16384" \
       --pkg-config="$(which pkg-config)" \
       --target-os=android \
       --enable-shared \
