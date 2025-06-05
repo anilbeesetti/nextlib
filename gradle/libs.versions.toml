@@ -8,6 +8,7 @@ googleErrorProne = "2.36.0"
 androidxAnnotation = "1.9.1"
 cmake = "3.22.1"
 ndk = "25.2.9519653"
+mavenPublish = "0.32.0"
 
 [libraries]
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
@@ -19,3 +20,4 @@ google-errorprone-annotations = { group = "com.google.errorprone", name = "error
 [plugins]
 androidLibrary = { id = "com.android.library", version.ref = "agp" }
 kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
