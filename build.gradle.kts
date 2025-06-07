@@ -9,7 +9,7 @@ plugins {
 subprojects {
     plugins.withId(rootProject.libs.plugins.mavenPublish.get().pluginId) {
         configure<com.vanniktech.maven.publish.MavenPublishBaseExtension> {
-            publishToMavenCentral(SonatypeHost.S01)
+            publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
             signAllPublications()
             coordinates(
                 groupId = "io.github.anilbeesetti",
