@@ -13,8 +13,8 @@ Kotlin DSL:
 
 ```kotlin
 dependencies {
-    implementation("com.github.anilbeesetti.nextlib:nextlib-media3ext:INSERT_VERSION_HERE") // To add media3 software decoders and extensions
-    implementation("com.github.anilbeesetti.nextlib:nextlib-mediainfo:INSERT_VERSION_HERE") // To get media info through ffmpeg
+    implementation("io.github.anilbeesetti:nextlib-media3ext:INSERT_VERSION_HERE") // To add media3 software decoders and extensions
+    implementation("io.github.anilbeesetti:nextlib-mediainfo:INSERT_VERSION_HERE") // To get media info through ffmpeg
 }
 ```
 
@@ -22,8 +22,8 @@ Groovy DSL:
 
 ```gradle
 dependencies {
-    implementation "com.github.anilbeesetti.nextlib:nextlib-media3ext:INSERT_VERSION_HERE" // To add media3 software decoders and extensions
-    implementation "com.github.anilbeesetti.nextlib:nextlib-mediainfo:INSERT_VERSION_HERE" // To get media info through ffmpeg
+    implementation "io.github.anilbeesetti:nextlib-media3ext:INSERT_VERSION_HERE" // To add media3 software decoders and extensions
+    implementation "io.github.anilbeesetti:nextlib-mediainfo:INSERT_VERSION_HERE" // To get media info through ffmpeg
 }
 ```
 
