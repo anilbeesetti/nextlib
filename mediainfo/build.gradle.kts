@@ -3,7 +3,7 @@ import com.android.build.gradle.internal.tasks.factory.dependsOn
 plugins {
     alias(libs.plugins.androidLibrary)
     alias(libs.plugins.kotlinAndroid)
-    id("maven-publish")
+    alias(libs.plugins.mavenPublish)
 }
 
 android {
@@ -58,18 +58,4 @@ val ffmpegSetup by tasks.registering(Exec::class) {
 
 dependencies {
     implementation(libs.androidx.annotation)
-}
-
-afterEvaluate {
-    publishing {
-        publications {
-            create<MavenPublication>("mavenJava") {
-                groupId = "io.github.anilbeesetti"
-                artifactId = "nextlib-mediainfo"
-                version = "1.0"
-
-                from(components["release"])
-            }
-        }
-    }
 }
