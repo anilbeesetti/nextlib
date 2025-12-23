@@ -1,5 +1,3 @@
-import com.vanniktech.maven.publish.SonatypeHost
-
 plugins {
     alias(libs.plugins.androidLibrary) apply false
     alias(libs.plugins.kotlinAndroid) apply false
@@ -9,7 +7,7 @@ plugins {
 subprojects {
     plugins.withId(rootProject.libs.plugins.mavenPublish.get().pluginId) {
         configure<com.vanniktech.maven.publish.MavenPublishBaseExtension> {
-            publishToMavenCentral(SonatypeHost.CENTRAL_PORTAL)
+            publishToMavenCentral()
             signAllPublications()
             coordinates(
                 groupId = "io.github.anilbeesetti",
