@@ -18,9 +18,22 @@ class NextTextRenderer(
 ): Renderer by delegate {
 
     var syncOffsetMilliseconds: Long = 0L
+    var speedMultiplier: Float = 1.0f
+        set(value) {
+            field = value.coerceIn(0.1f, 10f)
+        }
 
     override fun render(positionUs: Long, elapsedRealtimeUs: Long) {
-        delegate.render(positionUs + syncOffsetMilliseconds * 1000, elapsedRealtimeUs + syncOffsetMilliseconds * 1000)
+        val speedAdjustedPositionUs = if (speedMultiplier != 1.0f) {
+            (positionUs * speedMultiplier).toLong()
+        } else {
+            positionUs
+        }
+
+        val finalPositionUs = speedAdjustedPositionUs + syncOffsetMilliseconds * 1000
+        val finalElapsedRealtimeUs = elapsedRealtimeUs + syncOffsetMilliseconds * 1000
+
+        delegate.render(finalPositionUs, finalElapsedRealtimeUs)
     }
 
     override fun release() {
@@ -38,6 +51,18 @@ var ExoPlayer.subtitleDelayMilliseconds: Long
     set(value) {
         val textRenderer = getNextTextRenderer() ?: return
         textRenderer.syncOffsetMilliseconds = value
+    }
+
+@get:UnstableApi
+@set:UnstableApi
+var ExoPlayer.subtitleSpeed: Float
+    get() {
+        val textRenderer = getNextTextRenderer() ?: return 0f
+        return textRenderer.speedMultiplier
+    }
+    set(value) {
+        val textRenderer = getNextTextRenderer() ?: return
+        textRenderer.speedMultiplier = value
     }
 
 @UnstableApi
