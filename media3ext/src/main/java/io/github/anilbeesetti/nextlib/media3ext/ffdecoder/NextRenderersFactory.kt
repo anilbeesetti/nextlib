@@ -2,6 +2,7 @@ package io.github.anilbeesetti.nextlib.media3ext.ffdecoder
 
 import android.content.Context
 import android.os.Handler
+import android.os.Looper
 import androidx.media3.common.util.Log
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
@@ -9,6 +10,7 @@ import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 
 
@@ -89,6 +91,16 @@ open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(cont
             // The extension is present, but instantiation failed.
             throw java.lang.RuntimeException("Error instantiating Ffmpeg extension", e)
         }
+    }
+
+    override fun buildTextRenderers(
+        context: Context,
+        output: TextOutput,
+        outputLooper: Looper,
+        extensionRendererMode: Int,
+        out: java.util.ArrayList<Renderer>
+    ) {
+        out.add(NextTextRenderer(output, outputLooper))
     }
 
     companion object {
