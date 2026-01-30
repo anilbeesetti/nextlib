@@ -143,7 +143,7 @@ int decodePacket(AVCodecContext *context, AVPacket *packet,
         // Resample output.
         AVSampleFormat sampleFormat = context->sample_fmt;
         int channelCount = context->ch_layout.nb_channels;
-        int channelLayout = (int) context->ch_layout.u.mask;
+        AVChannelLayout channelLayout = context->ch_layout;
         int sampleRate = context->sample_rate;
         int sampleCount = frame->nb_samples;
         int dataSize = av_samples_get_buffer_size(nullptr, channelCount, sampleCount,
@@ -153,8 +153,8 @@ int decodePacket(AVCodecContext *context, AVPacket *packet,
             resampleContext = (SwrContext *) context->opaque;
         } else {
             resampleContext = swr_alloc();
-            av_opt_set_int(resampleContext, "in_channel_layout", channelLayout, 0);
-            av_opt_set_int(resampleContext, "out_channel_layout", channelLayout, 0);
+            av_opt_set_chlayout(resampleContext, "in_chlayout", &channelLayout, 0);
+            av_opt_set_chlayout(resampleContext, "out_chlayout", &channelLayout, 0);
             av_opt_set_int(resampleContext, "in_sample_rate", sampleRate, 0);
             av_opt_set_int(resampleContext, "out_sample_rate", sampleRate, 0);
             av_opt_set_int(resampleContext, "in_sample_fmt", sampleFormat, 0);
