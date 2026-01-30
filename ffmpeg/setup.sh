@@ -4,6 +4,7 @@
 VPX_VERSION=1.13.0
 MBEDTLS_VERSION=3.4.1
 FFMPEG_VERSION=6.0
+AOM_VERSION=v3.9.1
 
 # Directories
 BASE_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -13,11 +14,12 @@ SOURCES_DIR=$BASE_DIR/sources
 FFMPEG_DIR=$SOURCES_DIR/ffmpeg-$FFMPEG_VERSION
 VPX_DIR=$SOURCES_DIR/libvpx-$VPX_VERSION
 MBEDTLS_DIR=$SOURCES_DIR/mbedtls-$MBEDTLS_VERSION
+AOM_DIR=$SOURCES_DIR/aom
 
 # Configuration
 ANDROID_ABIS="x86 x86_64 armeabi-v7a arm64-v8a"
 ANDROID_PLATFORM=21
-ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo libvpx_vp8 libvpx_vp9"
+ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo libvpx_vp8 libvpx_vp9 libaom_av1"
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || sysctl -n hw.pysicalcpu || echo 4)
 
 # Set up host platform variables
@@ -54,6 +56,18 @@ else
   fi
 fi
 
+# libaom need to be fetched via git, check if git is installed
+if [ -z "$(which git)" ]; then
+  echo "Git is not installed. Exiting..."
+  exit 1
+fi
+
+export FAM_CC=${TOOLCHAIN_PREFIX}/bin/${TARGET}-clang
+export FAM_CXX=${FAM_CC}++
+export FAM_LD=${FAM_CC}# Forcing FFmpeg and its dependencies to look for dependencies
+# in a specific directory when pkg-config is used
+export PKG_CONFIG_LIBDIR=$BUILD_DIR/external/lib/pkgconfig
+
 mkdir -p $SOURCES_DIR
 
 function downloadLibVpx() {
@@ -76,6 +90,17 @@ function downloadMbedTLS() {
   tar -zxf $MBEDTLS_FILE
   rm $MBEDTLS_FILE
   popd
+}
+
+
+function fetchLibaomByGit() {
+    pushd $SOURCES_DIR
+    echo "Cloning libaom source code from Git..."
+    git clone https://aomedia.googlesource.com/aom
+    pushd $AOM_DIR
+    git fetch origin tag $AOM_VERSION & git checkout -b ${AOM_VERSION}_local $AOM_VERSION
+    popd
+    popd
 }
 
 function downloadFfmpeg() {
@@ -178,6 +203,29 @@ function buildMbedTLS() {
     popd
 }
 
+function buildAom() {
+    pushd $AOM_DIR
+
+    for ABI in $ANDROID_ABIS; do
+
+      CMAKE_BUILD_DIR=$AOM_DIR/aom_build_${ABI}
+      rm -rf ${CMAKE_BUILD_DIR}
+      mkdir -p ${CMAKE_BUILD_DIR}
+      cd ${CMAKE_BUILD_DIR}
+
+      ${CMAKE_EXECUTABLE} .. \
+       -DANDROID_PLATFORM=${ANDROID_PLATFORM} \
+       -DANDROID_ABI=$ABI \
+       -DCMAKE_TOOLCHAIN_FILE=${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake \
+       -DCMAKE_INSTALL_PREFIX=$BUILD_DIR/external/$ABI
+
+      make -j$JOBS
+      make install
+
+    done
+    popd
+}
+
 function buildFfmpeg() {
   pushd $FFMPEG_DIR
   EXTRA_BUILD_CONFIGURATION_FLAGS=""
@@ -255,6 +303,7 @@ function buildFfmpeg() {
       --enable-swresample \
       --enable-avformat \
       --enable-libvpx \
+      --enable-libaom \
       --enable-protocol=file,http,https,mmsh,mmst,pipe,rtmp,rtmps,rtmpt,rtmpts,rtp,tls \
       --enable-version3 \
       --enable-mbedtls \
@@ -292,6 +341,11 @@ if [[ ! -d "$OUTPUT_DIR" && ! -d "$BUILD_DIR" ]]; then
     downloadLibVpx
   fi
 
+  # Fetch Libaom source code if it doesn't exist
+  if [[ ! -d "$AOM_DIR" ]]; then
+    fetchLibaomByGit
+  fi
+
   # Download Ffmpeg source code if it doesn't exist
   if [[ ! -d "$FFMPEG_DIR" ]]; then
     downloadFfmpeg
@@ -300,5 +354,6 @@ if [[ ! -d "$OUTPUT_DIR" && ! -d "$BUILD_DIR" ]]; then
   # Building library
   buildMbedTLS
   buildLibVpx
+  buildAom
   buildFfmpeg
 fi
