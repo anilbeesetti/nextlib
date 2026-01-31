@@ -1,6 +1,6 @@
 [versions]
 androidCompileSdk = "36"
-agp = "8.13.2"
+agp = "9.0.0"
 kotlin = "2.3.0"
 androidxMedia3 = "1.9.1"
 checkerQual = "3.53.0"
@@ -19,5 +19,4 @@ google-errorprone-annotations = { group = "com.google.errorprone", name = "error
 
 [plugins]
 androidLibrary = { id = "com.android.library", version.ref = "agp" }
-kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
