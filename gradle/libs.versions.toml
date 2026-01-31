@@ -19,5 +19,4 @@ google-errorprone-annotations = { group = "com.google.errorprone", name = "error
 
 [plugins]
 androidLibrary = { id = "com.android.library", version.ref = "agp" }
-kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "mavenPublish" }
