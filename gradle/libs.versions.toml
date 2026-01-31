@@ -8,7 +8,7 @@ googleErrorProne = "2.46.0"
 androidxAnnotation = "1.9.1"
 cmake = "3.22.1"
 ndk = "25.2.9519653"
-mavenPublish = "0.35.0"
+mavenPublish = "0.36.0"
 
 [libraries]
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
