@@ -2,6 +2,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>
+#include <libavutil/display.h>
 #include <libavutil/imgutils.h>
 }
 
@@ -13,6 +14,7 @@ extern "C" {
 struct MediaThumbnailRetrieverContext {
     AVFormatContext *formatContext;
     int videoStreamIndex;
+    int rotationDegrees;
 };
 
 static MediaThumbnailRetrieverContext *context_from_handle(jlong handle) {
@@ -21,6 +23,34 @@ static MediaThumbnailRetrieverContext *context_from_handle(jlong handle) {
 
 static jlong handle_from_context(MediaThumbnailRetrieverContext *context) {
     return reinterpret_cast<jlong>(context);
+}
+
+static int normalize_rotation(int rotation) {
+    rotation %= 360;
+    if (rotation < 0) {
+        rotation += 360;
+    }
+    return rotation;
+}
+
+static int read_rotation_degrees(AVStream *stream) {
+    if (!stream) {
+        return 0;
+    }
+
+    int rotation = 0;
+    AVDictionaryEntry *rotateTag = av_dict_get(stream->metadata, "rotate", nullptr, 0);
+    if (rotateTag && rotateTag->value && *rotateTag->value) {
+        rotation = normalize_rotation(atoi(rotateTag->value));
+    }
+
+    uint8_t *displayMatrix = av_stream_get_side_data(stream, AV_PKT_DATA_DISPLAYMATRIX, nullptr);
+    if (displayMatrix) {
+        double theta = av_display_rotation_get(reinterpret_cast<int32_t *>(displayMatrix));
+        rotation = normalize_rotation(static_cast<int>(-theta));
+    }
+
+    return rotation;
 }
 
 static jobject create_bitmap(JNIEnv *env, int width, int height) {
@@ -306,6 +336,9 @@ static jlong create_context_from_source(const char *source) {
 
     context->formatContext = formatContext;
     context->videoStreamIndex = videoStreamIndex;
+    context->rotationDegrees = (videoStreamIndex >= 0)
+            ? read_rotation_degrees(formatContext->streams[videoStreamIndex])
+            : 0;
     return handle_from_context(context);
 }
 
@@ -394,6 +427,19 @@ Java_io_github_anilbeesetti_nextlib_mediainfo_MediaThumbnailRetriever_nativeGetF
     }
 
     return decode_frame_at_index(env, context, frame_index);
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_io_github_anilbeesetti_nextlib_mediainfo_MediaThumbnailRetriever_nativeGetRotationDegrees(
+        JNIEnv *env,
+        jobject thiz,
+        jlong handle) {
+    auto *context = context_from_handle(handle);
+    if (!context) {
+        return 0;
+    }
+    return context->rotationDegrees;
 }
 
 extern "C"

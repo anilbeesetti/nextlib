@@ -2,6 +2,7 @@ package io.github.anilbeesetti.nextlib.mediainfo
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import androidx.annotation.Keep
@@ -59,7 +60,8 @@ class MediaThumbnailRetriever : Closeable {
      */
     fun getFrameAtTime(timeUs: Long = -1L): Bitmap? {
         val handle = requireHandle()
-        return nativeGetFrameAtTime(handle, timeUs)
+        val bitmap = nativeGetFrameAtTime(handle, timeUs) ?: return null
+        return bitmap.rotate(nativeGetRotationDegrees(handle))
     }
 
     /**
@@ -68,7 +70,8 @@ class MediaThumbnailRetriever : Closeable {
     fun getFrameAtIndex(frameIndex: Int): Bitmap? {
         require(frameIndex >= 0) { "frameIndex must be >= 0" }
         val handle = requireHandle()
-        return nativeGetFrameAtIndex(handle, frameIndex)
+        val bitmap = nativeGetFrameAtIndex(handle, frameIndex) ?: return null
+        return bitmap.rotate(nativeGetRotationDegrees(handle))
     }
 
     override fun close() {
@@ -107,6 +110,9 @@ class MediaThumbnailRetriever : Closeable {
     private external fun nativeGetFrameAtIndex(handle: Long, frameIndex: Int): Bitmap?
 
     @Keep
+    private external fun nativeGetRotationDegrees(handle: Long): Int
+
+    @Keep
     private external fun nativeRelease(handle: Long)
 
     companion object {
@@ -114,4 +120,10 @@ class MediaThumbnailRetriever : Closeable {
             System.loadLibrary("mediainfo")
         }
     }
+}
+
+private fun Bitmap.rotate(degrees: Int): Bitmap {
+    if (degrees % 360 == 0) return this
+    val matrix = Matrix().apply { postRotate(degrees.toFloat()) }
+    return Bitmap.createBitmap(this, 0, 0, width, height, matrix, true)
 }
