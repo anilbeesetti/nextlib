@@ -56,9 +56,10 @@ class MediaThumbnailRetriever : Closeable {
     }
 
     /**
-     * Returns a frame at [timeUs] microseconds. Pass -1 to use a default representative frame.
+     * Returns a frame at [timeUs] microseconds
      */
-    fun getFrameAtTime(timeUs: Long = -1L): Bitmap? {
+    fun getFrameAtTime(timeUs: Long): Bitmap? {
+        require(timeUs >= 0) { "timeUs must be >= 0" }
         val handle = requireHandle()
         val bitmap = nativeGetFrameAtTime(handle, timeUs) ?: return null
         return bitmap.rotate(nativeGetRotationDegrees(handle))

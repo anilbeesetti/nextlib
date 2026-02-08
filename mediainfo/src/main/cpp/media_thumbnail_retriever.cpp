@@ -182,7 +182,7 @@ static AVCodecContext *create_decoder_context(MediaThumbnailRetrieverContext *co
     }
 
     if (avcodec_parameters_to_context(codecContext, videoStream->codecpar) < 0 ||
-        avcodec_open2(codecContext, decoder, nullptr) < 0) {
+            avcodec_open2(codecContext, decoder, nullptr) < 0) {
         avcodec_free_context(&codecContext);
         return nullptr;
     }
@@ -191,9 +191,9 @@ static AVCodecContext *create_decoder_context(MediaThumbnailRetrieverContext *co
 }
 
 static bool decode_next_frame(MediaThumbnailRetrieverContext *context,
-                              AVCodecContext *codecContext,
-                              AVPacket *packet,
-                              AVFrame *frame) {
+        AVCodecContext *codecContext,
+        AVPacket *packet,
+        AVFrame *frame) {
     while (av_read_frame(context->formatContext, packet) >= 0) {
         if (packet->stream_index != context->videoStreamIndex) {
             av_packet_unref(packet);
@@ -232,13 +232,7 @@ static jobject decode_frame_at_time(JNIEnv *env, MediaThumbnailRetrieverContext 
     }
 
     AVStream *videoStream = context->formatContext->streams[context->videoStreamIndex];
-    int64_t targetTimestamp = 0;
-    if (timeUs >= 0) {
-        targetTimestamp = av_rescale_q(timeUs, AV_TIME_BASE_Q, videoStream->time_base);
-    } else if (videoStream->duration > 0) {
-        targetTimestamp = videoStream->duration / 3;
-    }
-
+    int64_t targetTimestamp = av_rescale_q(timeUs, AV_TIME_BASE_Q, videoStream->time_base);
     av_seek_frame(context->formatContext, context->videoStreamIndex, targetTimestamp, AVSEEK_FLAG_BACKWARD);
     avcodec_flush_buffers(codecContext);
 
