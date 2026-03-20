@@ -317,6 +317,9 @@ static jlong create_context_from_source(const char *source) {
     int videoStreamIndex = -1;
     for (unsigned int i = 0; i < formatContext->nb_streams; ++i) {
         AVStream *stream = formatContext->streams[i];
+        if (!stream || !stream->codecpar) {
+            continue;
+        }
         if (stream->codecpar->codec_type != AVMEDIA_TYPE_VIDEO) {
             continue;
         }
