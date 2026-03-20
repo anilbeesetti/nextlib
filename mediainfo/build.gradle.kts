@@ -3,7 +3,6 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.androidLibrary)
-    alias(libs.plugins.kotlinAndroid)
     alias(libs.plugins.mavenPublish)
 }
 
@@ -50,8 +49,8 @@ android {
 val ffmpegSetup by tasks.registering(Exec::class) {
     workingDir = file("../ffmpeg")
     // export ndk path and run bash script
-    environment("ANDROID_SDK_HOME", android.sdkDirectory.absolutePath)
-    environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
+    environment("ANDROID_SDK_HOME", androidComponents.sdkComponents.sdkDirectory.get().asFile.absolutePath)
+    environment("ANDROID_NDK_HOME", androidComponents.sdkComponents.ndkDirectory.get().asFile.absolutePath)
     environment("ANDROID_CMAKE_VERSION", libs.versions.cmake.get())
     commandLine("bash", "setup.sh")
 }
