@@ -37,7 +37,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         mediainfo.cpp
         utils.cpp
         frame_loader_context.cpp
-        frame_extractor.cpp)
+        frame_extractor.cpp
+        media_thumbnail_retriever.cpp)
 
 # Specifies libraries CMake should link to your target library. You
 # can link libraries from various origins, such as libraries defined in this
