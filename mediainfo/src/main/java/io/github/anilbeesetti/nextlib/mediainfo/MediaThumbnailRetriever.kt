@@ -95,31 +95,38 @@ class MediaThumbnailRetriever : Closeable {
         }
     }
 
-    @Keep
-    private external fun nativeCreateFromPath(filePath: String): Long
-
-    @Keep
-    private external fun nativeCreateFromFD(fileDescriptor: Int): Long
-
-    @Keep
-    private external fun nativeGetEmbeddedPicture(handle: Long): ByteArray?
-
-    @Keep
-    private external fun nativeGetFrameAtTime(handle: Long, timeUs: Long): Bitmap?
-
-    @Keep
-    private external fun nativeGetFrameAtIndex(handle: Long, frameIndex: Int): Bitmap?
-
-    @Keep
-    private external fun nativeGetRotationDegrees(handle: Long): Int
-
-    @Keep
-    private external fun nativeRelease(handle: Long)
-
     companion object {
         init {
             System.loadLibrary("mediainfo")
         }
+
+        @Keep
+        @JvmStatic
+        private external fun nativeCreateFromPath(filePath: String): Long
+
+        @Keep
+        @JvmStatic
+        private external fun nativeCreateFromFD(fileDescriptor: Int): Long
+
+        @Keep
+        @JvmStatic
+        private external fun nativeGetEmbeddedPicture(handle: Long): ByteArray?
+
+        @Keep
+        @JvmStatic
+        private external fun nativeGetFrameAtTime(handle: Long, timeUs: Long): Bitmap?
+
+        @Keep
+        @JvmStatic
+        private external fun nativeGetFrameAtIndex(handle: Long, frameIndex: Int): Bitmap?
+
+        @Keep
+        @JvmStatic
+        private external fun nativeGetRotationDegrees(handle: Long): Int
+
+        @Keep
+        @JvmStatic
+        private external fun nativeRelease(handle: Long)
     }
 }
 

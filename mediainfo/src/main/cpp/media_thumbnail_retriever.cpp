@@ -233,7 +233,12 @@ static jobject decode_frame_at_time(JNIEnv *env, MediaThumbnailRetrieverContext 
 
     AVStream *videoStream = context->formatContext->streams[context->videoStreamIndex];
     int64_t targetTimestamp = av_rescale_q(timeUs, AV_TIME_BASE_Q, videoStream->time_base);
-    av_seek_frame(context->formatContext, context->videoStreamIndex, targetTimestamp, AVSEEK_FLAG_BACKWARD);
+    int seekResult = av_seek_frame(context->formatContext, context->videoStreamIndex, targetTimestamp, AVSEEK_FLAG_BACKWARD);
+    if (seekResult < 0) {
+        // Failed to seek to the requested timestamp; clean up and return null.
+        avcodec_free_context(&codecContext);
+        return nullptr;
+    }
     avcodec_flush_buffers(codecContext);
 
     AVPacket *packet = av_packet_alloc();
@@ -263,7 +268,11 @@ static jobject decode_frame_at_index(JNIEnv *env, MediaThumbnailRetrieverContext
         return nullptr;
     }
 
-    av_seek_frame(context->formatContext, context->videoStreamIndex, 0, AVSEEK_FLAG_BACKWARD);
+    int seekResult = av_seek_frame(context->formatContext, context->videoStreamIndex, 0, AVSEEK_FLAG_BACKWARD);
+    if (seekResult < 0) {
+        avcodec_free_context(&codecContext);
+        return nullptr;
+    }
     avcodec_flush_buffers(codecContext);
 
     AVPacket *packet = av_packet_alloc();
@@ -372,6 +381,9 @@ Java_io_github_anilbeesetti_nextlib_mediainfo_MediaThumbnailRetriever_nativeGetE
 
     for (unsigned int i = 0; i < context->formatContext->nb_streams; ++i) {
         AVStream *stream = context->formatContext->streams[i];
+        if (!stream) {
+            continue;
+        }
         if ((stream->disposition & AV_DISPOSITION_ATTACHED_PIC) == 0) {
             continue;
         }
