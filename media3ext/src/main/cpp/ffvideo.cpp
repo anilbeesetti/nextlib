@@ -24,6 +24,43 @@ extern "C" {
 
 #define ALIGN(x, a) (((x) + ((a) - 1)) & ~((a) - 1))
 
+// ANativeWindow_lock() implicitly connects the Surface's BufferQueue to the CPU
+// producer API. Since this Surface is shared with ExoPlayer's
+// MediaCodecVideoRenderer, that connection must be released once we are done, or
+// a hardware codec selected for a following media item cannot connect to the
+// same Surface and MediaCodec.configure() fails with IllegalArgumentException.
+//
+// native_window_api_disconnect() does this, but it lives in the platform-only
+// <system/window.h> and is neither declared nor exported by the public NDK, so
+// we reimplement it here against the stable ANativeWindow C ABI (perform()).
+constexpr int NATIVE_WINDOW_API_CPU = 2;        // producer connected via ANativeWindow_lock()
+constexpr int NATIVE_WINDOW_API_DISCONNECT = 14; // perform() operation code
+
+static int native_window_api_disconnect(ANativeWindow *window, int api) {
+    // Layout mirrors struct ANativeWindow from <system/window.h> up to perform().
+    struct ANativeWindowAbi {
+        int magic;
+        int version;
+        void *reserved[4];
+        void (*incRef)(void *);
+        void (*decRef)(void *);
+        const uint32_t flags;
+        const int minSwapInterval;
+        const int maxSwapInterval;
+        const float xdpi;
+        const float ydpi;
+        intptr_t oem[4];
+        int (*setSwapInterval)(void *, int);
+        int (*dequeueBuffer_DEPRECATED)(void *, void **);
+        int (*lockBuffer_DEPRECATED)(void *, void *);
+        int (*queueBuffer_DEPRECATED)(void *, void *);
+        int (*query)(const void *, int, int *);
+        int (*perform)(void *, int, ...);
+    };
+    auto *w = reinterpret_cast<ANativeWindowAbi *>(window);
+    return w->perform(window, NATIVE_WINDOW_API_DISCONNECT, api);
+}
+
 static const int VIDEO_DECODER_SUCCESS = 0;
 static const int VIDEO_DECODER_ERROR_INVALID_DATA = -1;
 static const int VIDEO_DECODER_ERROR_OTHER = -2;
@@ -43,6 +80,9 @@ const int kImageFormatYV12 = 0x32315659;
 struct JniContext {
     ~JniContext() {
         if (native_window) {
+            if (connected_as_cpu) {
+                native_window_api_disconnect(native_window, NATIVE_WINDOW_API_CPU);
+            }
             ANativeWindow_release(native_window);
         }
     }
@@ -52,6 +92,10 @@ struct JniContext {
             return true;
         }
         if (native_window) {
+            if (connected_as_cpu) {
+                native_window_api_disconnect(native_window, NATIVE_WINDOW_API_CPU);
+                connected_as_cpu = false;
+            }
             ANativeWindow_release(native_window);
         }
         native_window_width = 0;
@@ -79,6 +123,7 @@ struct JniContext {
     jobject surface = nullptr;
     int native_window_width = 0;
     int native_window_height = 0;
+    bool connected_as_cpu = false;
 };
 
 JniContext *createVideoContext(JNIEnv *env,
@@ -225,6 +270,8 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         LOGE("kJniStatusANativeWindowError");
         return VIDEO_DECODER_ERROR_OTHER;
     }
+    // A successful lock connects the native window to the CPU producer API.
+    jniContext->connected_as_cpu = true;
 
     // source planes from VideoDecoderOutputBuffer
     jobject yuvPlanes_object = env->GetObjectField(output_buffer, jniContext->yuvPlanes_field);
