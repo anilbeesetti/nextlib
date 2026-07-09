@@ -3,7 +3,7 @@
 # Versions
 VPX_VERSION=1.13.0
 MBEDTLS_VERSION=3.4.1
-FFMPEG_VERSION=6.0
+FFMPEG_VERSION=8.1
 
 # Directories
 BASE_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -211,7 +211,7 @@ function buildFfmpeg() {
       ;;
     x86_64)
       TOOLCHAIN=x86_64-linux-android21-
-      CPU=x86_64
+      CPU=x86-64
       ARCH=x86_64
       ;;
     *)
@@ -247,7 +247,6 @@ function buildFfmpeg() {
       --disable-vulkan \
       --disable-avdevice \
       --disable-avformat \
-      --disable-postproc \
       --disable-avfilter \
       --disable-symver \
       --enable-parsers \
