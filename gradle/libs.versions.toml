@@ -1,6 +1,6 @@
 [versions]
 androidCompileSdk = "36"
-agp = "9.2.1"
+agp = "9.3.1"
 kotlin = "2.4.0"
 androidxMedia3 = "1.10.1"
 checkerQual = "3.54.0"
