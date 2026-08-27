@@ -27,13 +27,42 @@ dependencies {
 }
 ```
 
-## Usage
+## Basic usage
 
-To use Ffmpeg decoders in your app, Add `NextRenderersFactory` (is one to one compatible with DefaultRenderersFactory) to `ExoPlayer`
+Use `NextRenderersFactory` as a drop-in `DefaultRenderersFactory` replacement to make the bundled
+FFmpeg decoders available to Media3:
+
 ```kotlin
-val renderersFactory = NextRenderersFactory(applicationContext) 
+val renderersFactory = NextRenderersFactory(applicationContext)
 
 ExoPlayer.Builder(applicationContext)
     .setRenderersFactory(renderersFactory)
     .build()
 ```
+
+## Runtime decoder switching
+
+Create a `DecoderManager` alongside `NextRenderersFactory` when the application needs to select
+video and audio decoders while keeping the same `ExoPlayer` instance:
+
+```kotlin
+val trackSelector = DefaultTrackSelector(applicationContext)
+val decoderManager = DecoderManager()
+val renderersFactory = NextRenderersFactory(applicationContext)
+    .setDecoderManager(decoderManager)
+val player = ExoPlayer.Builder(applicationContext)
+    .setRenderersFactory(renderersFactory)
+    .setTrackSelector(trackSelector)
+    .build()
+
+decoderManager.attach(player, trackSelector)
+decoderManager.selectVideoDecoder(DecoderMode.HARDWARE)
+decoderManager.selectAudioDecoder(null)
+
+decoderManager.detach()
+player.release()
+```
+
+Video and audio are selected independently. See
+[`media3ext/DECODER_SWITCHING.md`](media3ext/DECODER_SWITCHING.md) for mode behavior, lifecycle, and
+application-owned error handling.
