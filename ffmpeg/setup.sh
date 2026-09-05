@@ -58,6 +58,8 @@ for tool in curl tar make pkg-config; do
   command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
 done
 
+X86_AS=$(command -v yasm || printf '%s\n' "${TOOLCHAIN_PREFIX}/bin/yasm")
+
 mkdir -p "$SOURCES_DIR"
 
 # Publish a source directory only after a complete download and extraction.
@@ -87,12 +89,12 @@ function buildLibVpx() {
       ;;
     x86)
       EXTRA_BUILD_FLAGS="--force-target=x86-android-gcc --disable-sse2 --disable-sse3 --disable-ssse3 --disable-sse4_1 --disable-avx --disable-avx2 --enable-pic"
-      VPX_AS=$(command -v yasm || printf '%s\n' "${TOOLCHAIN_PREFIX}/bin/yasm")
+      VPX_AS=$X86_AS
       TOOLCHAIN=i686-linux-android21-
       ;;
     x86_64)
       EXTRA_BUILD_FLAGS="--force-target=x86_64-android-gcc --disable-sse2 --disable-sse3 --disable-ssse3 --disable-sse4_1 --disable-avx --disable-avx2 --enable-pic --disable-neon --disable-neon-asm"
-      VPX_AS=$(command -v yasm || printf '%s\n' "${TOOLCHAIN_PREFIX}/bin/yasm")
+      VPX_AS=$X86_AS
       TOOLCHAIN=x86_64-linux-android21-
       ;;
     *)
@@ -211,6 +213,7 @@ function buildFfmpeg() {
     ./configure \
       --prefix="$BUILD_DIR/$ABI" \
       --enable-cross-compile \
+      --x86asmexe="$X86_AS" \
       --arch=$ARCH \
       --cpu=$CPU \
       --cross-prefix="${TOOLCHAIN_PREFIX}/bin/$TOOLCHAIN" \
