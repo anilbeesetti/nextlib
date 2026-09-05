@@ -11,11 +11,23 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 import java.lang.reflect.Proxy
 
 @UnstableApi
 class DecoderRendererControllerTest {
+    @Test
+    fun initializedDecoderUsesQueriedCodecInfoWithoutPlayerFormat() {
+        val controller = DecoderRendererController(DecoderMode.AUTO, DecoderMode.AUTO)
+        DecoderMediaCodecSelector(controller, codecSelector).getDecoderInfos(MimeTypes.VIDEO_H264, false, false)
+        assertEquals(DecoderMode.HARDWARE, controller.activeMode("hardware"))
+        assertEquals(DecoderMode.SOFTWARE, controller.activeMode("software"))
+        assertEquals(DecoderMode.FFMPEG, controller.activeMode("ffmpeg6.0-h264"))
+        assertNull(controller.activeMode("unknown"))
+        assertNull(controller.activeMode("not-queried"))
+    }
+
     @Test
     fun modesEnableOnlyTheirRendererCategory() {
         assertTrue(DecoderMode.AUTO.enables(ffmpeg = false))

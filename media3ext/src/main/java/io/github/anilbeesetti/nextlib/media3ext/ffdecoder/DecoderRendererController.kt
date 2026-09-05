@@ -11,13 +11,26 @@ import androidx.media3.exoplayer.RendererCapabilities
 import androidx.media3.exoplayer.mediacodec.MediaCodecInfo
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import java.util.concurrent.ConcurrentHashMap
 
 @UnstableApi
 internal class DecoderRendererController(
     @Volatile var videoMode: DecoderMode,
     @Volatile var audioMode: DecoderMode,
 ) {
+    internal val decoderInfos = ConcurrentHashMap<String, MediaCodecInfo>()
+
     private var renderers: Array<Renderer>? = null
+
+    fun activeMode(decoderName: String): DecoderMode? {
+        if (decoderName.startsWith("ffmpeg")) return DecoderMode.FFMPEG
+        val info = decoderInfos[decoderName]
+        return when {
+            info?.hardwareAccelerated == true -> DecoderMode.HARDWARE
+            info?.softwareOnly == true -> DecoderMode.SOFTWARE
+            else -> null
+        }
+    }
 
     fun owns(player: ExoPlayer): Boolean = renderers?.let { renderers ->
         player.rendererCount == renderers.size &&
@@ -71,6 +84,7 @@ internal class DecoderMediaCodecSelector(
             requiresSecureDecoder,
             requiresTunnelingDecoder,
         )
+        decoderInfos.forEach { controller.decoderInfos[it.name] = it }
         val mode = when {
             MimeTypes.isVideo(mimeType) -> controller.videoMode
             MimeTypes.isAudio(mimeType) -> controller.audioMode

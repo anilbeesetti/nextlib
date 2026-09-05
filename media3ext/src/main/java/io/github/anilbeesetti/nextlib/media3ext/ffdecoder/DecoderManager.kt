@@ -7,7 +7,6 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
-import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 
 /**
@@ -49,10 +48,7 @@ class DecoderManager(
             initializedTimestampMs: Long,
             initializationDurationMs: Long,
         ) {
-            activeVideoMode = activeDecoderMode(
-                decoderName = decoderName,
-                mimeType = player?.videoFormat?.sampleMimeType,
-            )
+            activeVideoMode = controller.activeMode(decoderName)
         }
 
         override fun onAudioDecoderInitialized(
@@ -61,10 +57,7 @@ class DecoderManager(
             initializedTimestampMs: Long,
             initializationDurationMs: Long,
         ) {
-            activeAudioMode = activeDecoderMode(
-                decoderName = decoderName,
-                mimeType = player?.audioFormat?.sampleMimeType,
-            )
+            activeAudioMode = controller.activeMode(decoderName)
         }
 
         override fun onVideoDisabled(
@@ -141,26 +134,3 @@ class DecoderManager(
 
 internal fun DecoderMode.requiresMediaCodecRestart(other: DecoderMode): Boolean =
     this != other && this != DecoderMode.FFMPEG && other != DecoderMode.FFMPEG
-
-@UnstableApi
-private fun activeDecoderMode(
-    decoderName: String,
-    mimeType: String?,
-): DecoderMode? {
-    if (decoderName.contains("ffmpeg", ignoreCase = true)) return DecoderMode.FFMPEG
-
-    val codecInfo = mimeType?.let {
-        runCatching {
-            MediaCodecSelector.DEFAULT.getDecoderInfos(
-                /* mimeType = */ it,
-                /* requiresSecureDecoder = */ decoderName.endsWith(".secure", ignoreCase = true),
-                /* requiresTunnelingDecoder = */ false,
-            )
-        }.getOrNull()?.firstOrNull { info -> info.name == decoderName }
-    }
-    return when {
-        codecInfo?.hardwareAccelerated == true -> DecoderMode.HARDWARE
-        codecInfo?.softwareOnly == true -> DecoderMode.SOFTWARE
-        else -> null
-    }
-}
