@@ -15,8 +15,20 @@ class DecoderManagerTest {
             initialAudioMode = DecoderMode.SOFTWARE,
         )
 
-        assertNull(manager.videoMode)
-        assertNull(manager.audioMode)
+        assertEquals(DecoderMode.HARDWARE, manager.videoMode)
+        assertEquals(DecoderMode.SOFTWARE, manager.audioMode)
+        assertNull(manager.activeVideoMode)
+        assertNull(manager.activeAudioMode)
+    }
+
+    @Test
+    fun onlyChangesBetweenMediaCodecModesRequireRestart() {
+        assertEquals(true, DecoderMode.AUTO.requiresMediaCodecRestart(DecoderMode.HARDWARE))
+        assertEquals(true, DecoderMode.HARDWARE.requiresMediaCodecRestart(DecoderMode.SOFTWARE))
+        assertEquals(true, DecoderMode.SOFTWARE.requiresMediaCodecRestart(DecoderMode.AUTO))
+        assertEquals(false, DecoderMode.HARDWARE.requiresMediaCodecRestart(DecoderMode.HARDWARE))
+        assertEquals(false, DecoderMode.AUTO.requiresMediaCodecRestart(DecoderMode.FFMPEG))
+        assertEquals(false, DecoderMode.FFMPEG.requiresMediaCodecRestart(DecoderMode.HARDWARE))
     }
 
     @Test
@@ -24,7 +36,7 @@ class DecoderManagerTest {
         val manager = DecoderManager()
 
         val error = assertThrows(IllegalStateException::class.java) {
-            manager.selectVideoDecoder(DecoderMode.APP_SOFTWARE)
+            manager.selectVideoDecoder(DecoderMode.FFMPEG)
         }
 
         assertEquals("Attach DecoderManager before selecting a decoder", error.message)

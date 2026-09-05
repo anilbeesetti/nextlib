@@ -46,18 +46,16 @@ Create a `DecoderManager` alongside `NextRenderersFactory` when the application 
 video and audio decoders while keeping the same `ExoPlayer` instance:
 
 ```kotlin
-val trackSelector = DefaultTrackSelector(applicationContext)
 val decoderManager = DecoderManager()
 val renderersFactory = NextRenderersFactory(applicationContext)
     .setDecoderManager(decoderManager)
 val player = ExoPlayer.Builder(applicationContext)
     .setRenderersFactory(renderersFactory)
-    .setTrackSelector(trackSelector)
     .build()
 
-decoderManager.attach(player, trackSelector)
+decoderManager.attach(player)
 decoderManager.selectVideoDecoder(DecoderMode.HARDWARE)
-decoderManager.selectAudioDecoder(null)
+decoderManager.selectAudioDecoder(DecoderMode.AUTO)
 
 decoderManager.detach()
 player.release()

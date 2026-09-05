@@ -1,98 +1,53 @@
-# Runtime Decoder Switching
+# Runtime decoder switching
 
-`DecoderManager` lets an application change video and audio decoder categories without replacing
-its `ExoPlayer`. `NextRenderersFactory` creates every required MediaCodec and FFmpeg renderer once,
-and the manager controls the renderer set after the application attaches them.
-
-## Decoder modes
-
-The same `DecoderMode` values are available for video and audio. Each track type is selected
-independently.
-
-| Mode | Behavior |
-| --- | --- |
-| `null` | Automatically prefers hardware MediaCodec, then software MediaCodec, then nextlib FFmpeg |
-| `HARDWARE` | Uses only MediaCodec decoders that Media3 identifies as hardware accelerated |
-| `SOFTWARE` | Uses only MediaCodec decoders that Media3 identifies as software-only |
-| `APP_SOFTWARE` | Uses only the FFmpeg renderer bundled with nextlib |
-
-`SOFTWARE` and `APP_SOFTWARE` are different decoder paths. `SOFTWARE` uses Android's MediaCodec
-software decoders; `APP_SOFTWARE` uses nextlib's FFmpeg implementation.
-
-In automatic mode, the system renderer is evaluated before the FFmpeg renderer. MediaCodec
-candidates are ordered as known hardware, known software-only, then codecs whose acceleration
-category is unknown.
-
-## Setup
-
-Create the manager and pass it to the factory before building the player. Attach the player and
-track selector to the manager before preparing media:
+`DecoderManager` selects video and audio decoders independently on the same `ExoPlayer`.
 
 ```kotlin
-val trackSelector = DefaultTrackSelector(applicationContext)
 val decoderManager = DecoderManager()
-val renderersFactory = NextRenderersFactory(applicationContext)
-    .setDecoderManager(decoderManager)
+val renderersFactory = NextRenderersFactory(context).setDecoderManager(decoderManager)
+val player = ExoPlayer.Builder(context).setRenderersFactory(renderersFactory).build()
+decoderManager.attach(player) // Before preparing media; requires DefaultTrackSelector.
 
-val player = ExoPlayer.Builder(applicationContext)
-    .setRenderersFactory(renderersFactory)
-    .setTrackSelector(trackSelector)
-    .build()
+decoderManager.selectVideoDecoder(DecoderMode.FFMPEG)
+decoderManager.selectAudioDecoder(DecoderMode.AUTO)
 
-decoderManager.attach(player, trackSelector)
-```
-
-A factory instance creates one renderer set and must not be shared by multiple players. Call manager
-methods on the player's application thread. Detach the manager before releasing the player:
-
-```kotlin
+// Before releasing the player:
 decoderManager.detach()
 player.release()
 ```
 
-## Selecting decoders
+| Mode | Eligible decoders |
+| --- | --- |
+| `AUTO` (default) | Hardware MediaCodec, software MediaCodec, unknown MediaCodec, then bundled FFmpeg |
+| `HARDWARE` | Only MediaCodec decoders identified as hardware accelerated |
+| `SOFTWARE` | Only MediaCodec decoders identified as software-only |
+| `FFMPEG` | Only nextlib's FFmpeg renderer |
 
-Video and audio changes do not affect each other:
+Pass `initialVideoMode` and `initialAudioMode` to the manager to change the initial choices.
+`videoMode` and `audioMode` report requested modes. `activeVideoMode` and `activeAudioMode`
+report initialized decoder categories, or `null` while unknown or disabled. During a switch,
+the previous active category remains until the renderer is disabled or a new decoder initializes.
+Unknown MediaCodec categories remain `null`; automatic selection is reported as the actual
+category once identified. Audio passthrough does not initialize a decoder.
 
-```kotlin
-decoderManager.selectVideoDecoder(DecoderMode.APP_SOFTWARE)
-decoderManager.selectAudioDecoder(DecoderMode.SOFTWARE)
-```
+Use one manager/factory per player and call manager methods on the player's application thread.
+Installing a manager enables extension renderers in normal priority order and MediaCodec
+initialization fallback. Keep extensions enabled; `PREFER` changes automatic renderer priority.
+Custom MediaCodec selectors are retained and their results are filtered by the selected mode.
 
-Applications that want the same category for both tracks should call both methods. Mixed choices do
-not require a special fallback setting; for example, FFmpeg video with automatic audio is:
+Switching retains the player, playlist, position, and `playWhenReady`. Changes among `AUTO`,
+`HARDWARE`, and `SOFTWARE` stop and prepare the player to release existing codecs; a stopped
+or unprepared player stays idle. Switching to/from `FFMPEG` remaps tracks without stopping.
+Choices persist across media items. Renderer capability gating is needed because Media3
+[maps tracks before selecting them](https://github.com/androidx/media/blob/release/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/trackselection/MappingTrackSelector.java).
 
-```kotlin
-decoderManager.selectVideoDecoder(DecoderMode.APP_SOFTWARE)
-decoderManager.selectAudioDecoder(null)
-```
+Applications own runtime error recovery, retry limits, and UI. `AUTO` permits FFmpeg when
+MediaCodec cannot support a format; it does not recover from runtime decoder failures.
+To retry after an error, select a fallback mode and call `player.prepare()`.
 
-`decoderManager.videoMode` and `decoderManager.audioMode` report the decoder modes currently
-initialized by the player. They are `null` before initialization and while switching. The manager
-updates them from Media3 analytics callbacks, including when automatic selection is enabled.
-Selecting before `attach` fails with a clear lifecycle error.
+## Migration from the initial PR API
 
-## Switching mechanics
-
-Mode changes preserve the player instance, playlist, current position, and `playWhenReady` value.
-
-Changing among automatic, `HARDWARE`, and `SOFTWARE` can change which MediaCodec instances are
-eligible. The manager stops and prepares the same player for these transitions so an active codec
-from the previous category is released. Changes between MediaCodec and `APP_SOFTWARE` normally
-remap the affected track to a different renderer without stopping the player.
-
-The selected modes remain active until the application changes them. Nextlib does not reset decoder
-modes when the media item changes.
-
-## Error handling
-
-`DecoderManager` does not listen for decoder errors, inspect unsupported tracks, choose fallback
-modes, or expose recovery state. The application owns those decisions and can call
-`selectVideoDecoder` or `selectAudioDecoder` when it wants to retry another mode.
-
-Automatic mode allows Media3 to select FFmpeg when the MediaCodec renderer does not support a
-format, and MediaCodec can try its eligible decoder candidates. Nextlib does not automatically
-recover from a runtime decoder failure after playback has started.
-
-When retrying after a player error, the application should select the fallback mode and prepare the
-player. It remains responsible for dialogs, retry limits, analytics, and terminal error handling.
+- Replace `null` selections with `DecoderMode.AUTO` and `APP_SOFTWARE` with `FFMPEG`.
+- Replace `attach(player, trackSelector)` with `attach(player)`.
+- Use `activeVideoMode` / `activeAudioMode` for the former initialized-mode properties;
+  `videoMode` / `audioMode` now consistently report the requested selection.

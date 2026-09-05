@@ -1,9 +1,10 @@
 package io.github.anilbeesetti.nextlib.media3ext.ffdecoder
 
-import androidx.annotation.OptIn
+import android.os.Looper
 import androidx.media3.common.C
-import androidx.media3.common.Tracks
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.exoplayer.DecoderCounters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
@@ -17,18 +18,24 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
  */
 @UnstableApi
 class DecoderManager(
-    initialVideoMode: DecoderMode? = null,
-    initialAudioMode: DecoderMode? = null,
+    initialVideoMode: DecoderMode = DecoderMode.AUTO,
+    initialAudioMode: DecoderMode = DecoderMode.AUTO,
 ) {
     /** The video decoder mode currently initialized by the player. */
     @Volatile
-    var videoMode: DecoderMode? = null
+    var activeVideoMode: DecoderMode? = null
         private set
 
     /** The audio decoder mode currently initialized by the player. */
     @Volatile
-    var audioMode: DecoderMode? = null
+    var activeAudioMode: DecoderMode? = null
         private set
+
+    /** The requested video mode, including [DecoderMode.AUTO]. */
+    val videoMode: DecoderMode get() = controller.videoMode
+
+    /** The requested audio mode, including [DecoderMode.AUTO]. */
+    val audioMode: DecoderMode get() = controller.audioMode
 
     internal val controller = DecoderRendererController(initialVideoMode, initialAudioMode)
 
@@ -42,10 +49,9 @@ class DecoderManager(
             initializedTimestampMs: Long,
             initializationDurationMs: Long,
         ) {
-            videoMode = activeDecoderMode(
-                selectedMode = controller.videoMode,
+            activeVideoMode = activeDecoderMode(
                 decoderName = decoderName,
-                mimeType = player?.currentTracks?.selectedMimeType(C.TRACK_TYPE_VIDEO),
+                mimeType = player?.videoFormat?.sampleMimeType,
             )
         }
 
@@ -55,21 +61,34 @@ class DecoderManager(
             initializedTimestampMs: Long,
             initializationDurationMs: Long,
         ) {
-            audioMode = activeDecoderMode(
-                selectedMode = controller.audioMode,
+            activeAudioMode = activeDecoderMode(
                 decoderName = decoderName,
-                mimeType = player?.currentTracks?.selectedMimeType(C.TRACK_TYPE_AUDIO),
+                mimeType = player?.audioFormat?.sampleMimeType,
             )
+        }
+
+        override fun onVideoDisabled(
+            eventTime: AnalyticsListener.EventTime,
+            decoderCounters: DecoderCounters,
+        ) {
+            activeVideoMode = null
+        }
+
+        override fun onAudioDisabled(
+            eventTime: AnalyticsListener.EventTime,
+            decoderCounters: DecoderCounters,
+        ) {
+            activeAudioMode = null
         }
     }
 
     /** Connects this manager to a player and its track selector. */
-    fun attach(
-        player: ExoPlayer,
-        trackSelector: DefaultTrackSelector,
-    ) {
+    fun attach(player: ExoPlayer) {
+        check(Looper.myLooper() == player.applicationLooper) { "Use the player's application thread" }
+        val trackSelector = player.trackSelector as? DefaultTrackSelector
+            ?: error("DecoderManager requires DefaultTrackSelector")
         check(this.player == null) { "DecoderManager is already attached to a player" }
-        check(controller.supportsDecoderSwitching) {
+        check(controller.owns(player)) {
             "Set this DecoderManager on NextRenderersFactory before building the player"
         }
 
@@ -79,76 +98,56 @@ class DecoderManager(
         controller.apply(trackSelector)
     }
 
-    /** Selects [mode] for video without changing audio. `null` enables automatic selection. */
-    fun selectVideoDecoder(mode: DecoderMode?) {
-        select(DecoderTrackType.VIDEO, mode)
+    /** Selects [mode] for video without changing audio. [DecoderMode.AUTO] enables automatic selection. */
+    fun selectVideoDecoder(mode: DecoderMode) {
+        select(C.TRACK_TYPE_VIDEO, mode)
     }
 
-    /** Selects [mode] for audio without changing video. `null` enables automatic selection. */
-    fun selectAudioDecoder(mode: DecoderMode?) {
-        select(DecoderTrackType.AUDIO, mode)
+    /** Selects [mode] for audio without changing video. [DecoderMode.AUTO] enables automatic selection. */
+    fun selectAudioDecoder(mode: DecoderMode) {
+        select(C.TRACK_TYPE_AUDIO, mode)
     }
 
     /** Detaches the player and track selector. Calling this more than once is safe. */
     fun detach() {
         val attachedPlayer = player ?: return
+        check(Looper.myLooper() == attachedPlayer.applicationLooper) { "Use the player's application thread" }
         attachedPlayer.removeAnalyticsListener(analyticsListener)
         player = null
         trackSelector = null
-        videoMode = null
-        audioMode = null
+        activeVideoMode = null
+        activeAudioMode = null
     }
 
-    private fun select(trackType: DecoderTrackType, mode: DecoderMode?) {
+    private fun select(trackType: Int, mode: DecoderMode) {
         val player = checkNotNull(player) { "Attach DecoderManager before selecting a decoder" }
+        check(Looper.myLooper() == player.applicationLooper) { "Use the player's application thread" }
         val trackSelector = checkNotNull(trackSelector)
         val previousMode = controller.mode(trackType)
         if (previousMode == mode) return
 
-        when (trackType) {
-            DecoderTrackType.VIDEO -> videoMode = null
-            DecoderTrackType.AUDIO -> audioMode = null
+        if (trackType == C.TRACK_TYPE_VIDEO) controller.videoMode = mode else controller.audioMode = mode
+        val restart = previousMode.requiresMediaCodecRestart(mode)
+        val shouldPrepare = restart && player.playbackState != Player.STATE_IDLE
+        if (restart) {
+            activeVideoMode = null
+            activeAudioMode = null
+            player.stop()
         }
-        controller.setMode(trackType, mode)
-        if (previousMode.requiresMediaCodecRestart(mode)) {
-            restartPlayer(player, trackSelector, controller)
-        } else {
-            controller.apply(trackSelector)
-        }
-    }
-
-    private fun restartPlayer(
-        player: ExoPlayer,
-        trackSelector: DefaultTrackSelector,
-        controller: DecoderRendererController,
-    ) {
-        val playWhenReady = player.playWhenReady
-        val shouldPrepare = player.mediaItemCount > 0
-        player.stop()
         controller.apply(trackSelector)
-        if (!shouldPrepare) return
-
-        player.prepare()
-        player.playWhenReady = playWhenReady
+        if (shouldPrepare) player.prepare()
     }
-
 }
 
-private val DecoderMode?.usesMediaCodec: Boolean
-    get() = this != DecoderMode.APP_SOFTWARE
-
-private fun DecoderMode?.requiresMediaCodecRestart(other: DecoderMode?): Boolean {
-    return this != other && usesMediaCodec && other.usesMediaCodec
-}
+internal fun DecoderMode.requiresMediaCodecRestart(other: DecoderMode): Boolean =
+    this != other && this != DecoderMode.FFMPEG && other != DecoderMode.FFMPEG
 
 @UnstableApi
 private fun activeDecoderMode(
-    selectedMode: DecoderMode?,
     decoderName: String,
     mimeType: String?,
-): DecoderMode {
-    if (decoderName.contains("ffmpeg", ignoreCase = true)) return DecoderMode.APP_SOFTWARE
-    if (selectedMode != null) return selectedMode
+): DecoderMode? {
+    if (decoderName.contains("ffmpeg", ignoreCase = true)) return DecoderMode.FFMPEG
 
     val codecInfo = mimeType?.let {
         runCatching {
@@ -159,17 +158,9 @@ private fun activeDecoderMode(
             )
         }.getOrNull()?.firstOrNull { info -> info.name == decoderName }
     }
-    return if (codecInfo?.hardwareAccelerated == true) {
-        DecoderMode.HARDWARE
-    } else {
-        DecoderMode.SOFTWARE
+    return when {
+        codecInfo?.hardwareAccelerated == true -> DecoderMode.HARDWARE
+        codecInfo?.softwareOnly == true -> DecoderMode.SOFTWARE
+        else -> null
     }
-}
-
-@OptIn(UnstableApi::class)
-private fun Tracks.selectedMimeType(trackType: Int): String? {
-    return groups.firstOrNull { group -> group.type == trackType && group.isSelected }
-        ?.mediaTrackGroup
-        ?.getFormat(0)
-        ?.sampleMimeType
 }

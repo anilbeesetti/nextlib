@@ -18,17 +18,17 @@ import io.github.anilbeesetti.nextlib.media3ext.renderer.NextTextRenderer
 /**
  * A [DefaultRenderersFactory] with nextlib's FFmpeg renderers and runtime decoder switching support.
  *
- * The renderer set starts in [DecoderMode]. Create a [DecoderManager] separately and attach it
+ * Create a [DecoderManager] separately and attach it
  * after building the player to change video or audio modes.
  */
 @UnstableApi
 open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
     private var decoderManager: DecoderManager? = null
 
-    fun setDecoderManager(decoderManager: DecoderManager): DefaultRenderersFactory = this.apply {
+    fun setDecoderManager(decoderManager: DecoderManager): NextRenderersFactory = this.apply {
         this.decoderManager = decoderManager
         this.setEnableDecoderFallback(true)
-        this.setMediaCodecSelector(DecoderMediaCodecSelector(decoderManager.controller))
+        this.setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)
     }
 
     override fun createRenderers(
@@ -61,7 +61,8 @@ open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(cont
         super.buildAudioRenderers(
             context,
             extensionRendererMode,
-            mediaCodecSelector,
+            decoderManager?.let { DecoderMediaCodecSelector(it.controller, mediaCodecSelector) }
+                ?: mediaCodecSelector,
             enableDecoderFallback,
             audioSink,
             eventHandler,
@@ -99,7 +100,8 @@ open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(cont
         super.buildVideoRenderers(
             context,
             extensionRendererMode,
-            mediaCodecSelector,
+            decoderManager?.let { DecoderMediaCodecSelector(it.controller, mediaCodecSelector) }
+                ?: mediaCodecSelector,
             enableDecoderFallback,
             eventHandler,
             eventListener,
