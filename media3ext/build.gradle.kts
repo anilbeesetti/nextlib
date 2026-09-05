@@ -1,4 +1,3 @@
-import com.android.build.gradle.internal.tasks.factory.dependsOn
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -45,17 +44,11 @@ android {
     }
 }
 
-// Gradle task to setup ffmpeg
-val ffmpegSetup by tasks.registering(Exec::class) {
-    workingDir = file("../ffmpeg")
-    // export ndk path and run bash script
-    environment("ANDROID_SDK_HOME", androidComponents.sdkComponents.sdkDirectory.get().asFile.absolutePath)
-    environment("ANDROID_NDK_HOME", androidComponents.sdkComponents.ndkDirectory.get().asFile.absolutePath)
-    environment("ANDROID_CMAKE_VERSION", libs.versions.cmake.get())
-    commandLine("bash", "setup.sh")
+tasks.configureEach {
+    if (name == "preBuild" || name.startsWith("configureCMake") || name.startsWith("buildCMake")) {
+        dependsOn(":ffmpegSetup")
+    }
 }
-
-tasks.preBuild.dependsOn(ffmpegSetup)
 
 dependencies {
     implementation(libs.androidx.media3.exoplayer)
