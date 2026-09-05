@@ -10,13 +10,43 @@ import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
+import androidx.media3.exoplayer.metadata.MetadataOutput
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.video.VideoRendererEventListener
 import io.github.anilbeesetti.nextlib.media3ext.renderer.NextTextRenderer
 
-
+/**
+ * A [DefaultRenderersFactory] with nextlib's FFmpeg renderers and runtime decoder switching support.
+ *
+ * Create a [DecoderManager] separately and attach it
+ * after building the player to change video or audio modes.
+ */
 @UnstableApi
 open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
+    private var decoderManager: DecoderManager? = null
+
+    fun setDecoderManager(decoderManager: DecoderManager): NextRenderersFactory = this.apply {
+        this.decoderManager = decoderManager
+        this.setEnableDecoderFallback(true)
+        this.setExtensionRendererMode(EXTENSION_RENDERER_MODE_ON)
+    }
+
+    override fun createRenderers(
+        eventHandler: Handler,
+        videoRendererEventListener: VideoRendererEventListener,
+        audioRendererEventListener: AudioRendererEventListener,
+        textRendererOutput: TextOutput,
+        metadataRendererOutput: MetadataOutput,
+    ): Array<Renderer> {
+        val renderers = super.createRenderers(
+            eventHandler,
+            videoRendererEventListener,
+            audioRendererEventListener,
+            textRendererOutput,
+            metadataRendererOutput,
+        )
+        return decoderManager?.controller?.wrapRenderers(renderers) ?: renderers
+    }
 
     override fun buildAudioRenderers(
         context: Context,
@@ -26,17 +56,18 @@ open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(cont
         audioSink: AudioSink,
         eventHandler: Handler,
         eventListener: AudioRendererEventListener,
-        out: ArrayList<Renderer>
+        out: ArrayList<Renderer>,
     ) {
         super.buildAudioRenderers(
             context,
             extensionRendererMode,
-            mediaCodecSelector,
+            decoderManager?.let { DecoderMediaCodecSelector(it.controller, mediaCodecSelector) }
+                ?: mediaCodecSelector,
             enableDecoderFallback,
             audioSink,
             eventHandler,
             eventListener,
-            out
+            out,
         )
 
         if (extensionRendererMode == EXTENSION_RENDERER_MODE_OFF) return
@@ -64,17 +95,18 @@ open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(cont
         eventHandler: Handler,
         eventListener: VideoRendererEventListener,
         allowedVideoJoiningTimeMs: Long,
-        out: ArrayList<Renderer>
+        out: ArrayList<Renderer>,
     ) {
         super.buildVideoRenderers(
             context,
             extensionRendererMode,
-            mediaCodecSelector,
+            decoderManager?.let { DecoderMediaCodecSelector(it.controller, mediaCodecSelector) }
+                ?: mediaCodecSelector,
             enableDecoderFallback,
             eventHandler,
             eventListener,
             allowedVideoJoiningTimeMs,
-            out
+            out,
         )
 
         if (extensionRendererMode == EXTENSION_RENDERER_MODE_OFF) return
@@ -85,12 +117,17 @@ open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(cont
         }
 
         try {
-            val renderer = FfmpegVideoRenderer(allowedVideoJoiningTimeMs, eventHandler, eventListener, MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY)
+            val renderer = FfmpegVideoRenderer(
+                /* allowedJoiningTimeMs = */ allowedVideoJoiningTimeMs,
+                /* eventHandler = */ eventHandler,
+                /* eventListener = */ eventListener,
+                /* maxDroppedFramesToNotify = */ MAX_DROPPED_VIDEO_FRAME_COUNT_TO_NOTIFY,
+            )
             out.add(extensionRendererIndex++, renderer)
             Log.i(TAG, "Loaded FfmpegVideoRenderer.")
-        } catch (e: java.lang.Exception) {
+        } catch (e: Exception) {
             // The extension is present, but instantiation failed.
-            throw java.lang.RuntimeException("Error instantiating Ffmpeg extension", e)
+            throw RuntimeException("Error instantiating Ffmpeg extension", e)
         }
     }
 
@@ -99,7 +136,7 @@ open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(cont
         output: TextOutput,
         outputLooper: Looper,
         extensionRendererMode: Int,
-        out: java.util.ArrayList<Renderer>
+        out: ArrayList<Renderer>,
     ) {
         out.add(NextTextRenderer(output, outputLooper))
     }

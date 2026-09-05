@@ -56,4 +56,5 @@ dependencies {
     implementation(libs.androidx.annotation)
     compileOnly(libs.checker.qual)
     compileOnly(libs.kotlin.annotations.jvm)
+    testImplementation(libs.junit)
 }
