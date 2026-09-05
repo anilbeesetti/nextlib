@@ -64,3 +64,32 @@ player.release()
 Video and audio are selected independently. See
 [`media3ext/DECODER_SWITCHING.md`](media3ext/DECODER_SWITCHING.md) for mode behavior, lifecycle, and
 application-owned error handling.
+
+## Building from source
+
+Use macOS or Linux (WSL on Windows), JDK 17+, `make`, `curl`, `tar`, and
+`pkg-config`. On Apple Silicon, also install native `yasm` (`brew install yasm`)
+for the x86 ABIs; the pinned NDK bundles an Intel-only assembler. Install [Android CLI](https://developer.android.com/tools/agents/android-cli/download)
+and put `android` on PATH, or set `ANDROID_CLI` to its executable path.
+Set `sdk.dir` in `local.properties` or export `ANDROID_HOME` to your Android SDK.
+
+```sh
+./gradlew assembleRelease
+```
+
+Both modules depend on one `:ffmpegSetup` task, which installs missing NDK/CMake
+packages with Android CLI and builds the four supported ABIs before CMake runs.
+NDK and CMake versions come from `gradle/libs.versions.toml`. Existing SDK tools
+are reused; Android CLI is only needed when a package is missing. Complete any
+SDK license prompts during initial installation before running a headless build.
+
+Gradle tracks the setup script, tool versions, and generated output so unchanged
+builds skip FFmpeg. To force rebuilding it:
+
+```sh
+./gradlew :ffmpegSetup --rerun-tasks
+```
+
+For standalone use, export `ANDROID_HOME` and run `bash ffmpeg/setup.sh` (always
+rebuilds). Run `python3 ffmpeg/test_setup.py` for setup regression checks without
+SDK downloads or native compilation.
