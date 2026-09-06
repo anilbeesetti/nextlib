@@ -117,3 +117,6 @@ Media3's `SimpleDecoder` input/output contract.
 
 See [AV1 verification](media3ext/AV1_VERIFICATION.md) for the Next Player playback
 checks and tested device coverage.
+
+See [FFmpeg and mbedTLS upgrade verification](ffmpeg/UPGRADE_VERIFICATION.md) for
+the current dependency build, TLS, rotation metadata, and playback checks.
