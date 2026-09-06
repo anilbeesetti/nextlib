@@ -144,21 +144,36 @@ struct JniContext {
         pendingFrames.clear();
     }
 
+    // Returns VIDEO_DECODER_* statuses, keeping receive errors distinct from bad input.
     int SendPacket(const AVPacket *packet) {
         int result;
         while ((result = avcodec_send_packet(codecContext, packet)) == AVERROR(EAGAIN)) {
             // FFmpeg has not accepted this packet. Preserve queued output and retry
             // the same input; dropping it corrupts VP9 reference frames.
             AVFrame *frame = av_frame_alloc();
-            if (!frame) return AVERROR(ENOMEM);
+            if (!frame) {
+                logError("av_frame_alloc", AVERROR(ENOMEM));
+                return VIDEO_DECODER_ERROR_OTHER;
+            }
             result = avcodec_receive_frame(codecContext, frame);
             if (result < 0) {
                 av_frame_free(&frame);
-                return result;
+                // FFmpeg 6's VP9 filter can consume hidden alt-ref frames without
+                // yielding output. Input may now be accepted, so retry it.
+                if (result == AVERROR(EAGAIN)) continue;
+                logError("avcodec_receive_frame", result);
+                // Match ffmpegReceiveFrame: a receive failure is fatal, never a
+                // reason to skip the current packet, which is still unaccepted.
+                return VIDEO_DECODER_ERROR_OTHER;
             }
             pendingFrames.push_back(frame);
         }
-        return result;
+        if (result < 0) {
+            logError("avcodec_send_packet", result);
+            return result == AVERROR_INVALIDDATA ? VIDEO_DECODER_ERROR_INVALID_DATA
+                                                 : VIDEO_DECODER_ERROR_OTHER;
+        }
+        return VIDEO_DECODER_SUCCESS;
     }
 
     int ReceiveFrame(AVFrame **frame) {
@@ -398,15 +413,6 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     // Queue input data.
     int result = jniContext->SendPacket(&packet);
     av_packet_unref(&packet);
-    if (result) {
-        logError("avcodec_send_packet", result);
-        if (result == AVERROR_INVALIDDATA) {
-            // need more data
-            return VIDEO_DECODER_ERROR_INVALID_DATA;
-        } else {
-            return VIDEO_DECODER_ERROR_OTHER;
-        }
-    }
     return result;
 }
 

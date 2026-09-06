@@ -3,6 +3,13 @@
 #include <media/NdkImageReader.h>
 #include <cassert>
 #include <cstdio>
+extern "C" {
+#include <libavcodec/avcodec.h>
+}
+
+static int SendForTest(AVCodecContext *, const AVPacket *);
+static int ReceiveForTest(AVCodecContext *, AVFrame *);
+void LogErrorForTest(const char *, int);
 
 static int invalidBuffer = 0;
 static int LockForTest(ANativeWindow *window, ANativeWindow_Buffer *buffer, ARect *dirty) {
@@ -19,10 +26,41 @@ static int LockForTest(ANativeWindow *window, ANativeWindow_Buffer *buffer, ARec
     return result;
 }
 
-// Inject only the returned lock metadata; allocation, locking, disconnect and posting are real.
+// Keep real window/decoder operations; wrappers observe backpressure and inject
+// lock metadata faults or a receive failure only in their dedicated tests.
 #define ANativeWindow_lock LockForTest
+#define avcodec_send_packet SendForTest
+#define avcodec_receive_frame ReceiveForTest
+#define logError LogErrorForTest
 #include "../../main/cpp/ffvideo.cpp"
 #undef ANativeWindow_lock
+#undef avcodec_send_packet
+#undef avcodec_receive_frame
+#undef logError
+
+void logError(const char *, int);
+static bool sendBlocked = false;
+static int emptyReceivesAfterBlockedSend = 0;
+static int injectedReceiveError = 0;
+static const char *lastErrorFunction = nullptr;
+
+static int SendForTest(AVCodecContext *context, const AVPacket *packet) {
+    int result = injectedReceiveError ? AVERROR(EAGAIN) : avcodec_send_packet(context, packet);
+    sendBlocked = result == AVERROR(EAGAIN);
+    return result;
+}
+
+static int ReceiveForTest(AVCodecContext *context, AVFrame *frame) {
+    int result = injectedReceiveError ? injectedReceiveError : avcodec_receive_frame(context, frame);
+    injectedReceiveError = 0;
+    if (sendBlocked && result == AVERROR(EAGAIN)) emptyReceivesAfterBlockedSend++;
+    return result;
+}
+
+void LogErrorForTest(const char *function, int error) {
+    lastErrorFunction = function;
+    logError(function, error);
+}
 
 static AVFrame *MakeFrame() {
     AVFrame *frame = av_frame_alloc();
@@ -144,7 +182,7 @@ static void CheckVpDecoders() {
     puts("PASS: built-in VP8/VP9 decoders are available and libvpx decoders are absent");
 }
 
-static void CheckVp9PacketBackpressure() {
+static void CheckVp9PacketBackpressure(const char *filename, int frameCount, int width, int height) {
     JniContext context;
     const AVCodec *codec = avcodec_find_decoder_by_name("vp9");
     context.codecContext = avcodec_alloc_context3(codec);
@@ -152,11 +190,11 @@ static void CheckVp9PacketBackpressure() {
     context.codecContext->thread_count = 4;
     assert(avcodec_open2(context.codecContext, codec, nullptr) == 0);
 
-    FILE *input = fopen("vp9.ivf", "rb");
+    FILE *input = fopen(filename, "rb");
     assert(input);
     for (int pass = 0; pass < 2; pass++) {
         assert(fseek(input, 32, SEEK_SET) == 0); // IVF file header.
-        for (int index = 0; index < 24; index++) {
+        for (int index = 0; index < frameCount; index++) {
             uint8_t header[12];
             assert(fread(header, 1, sizeof(header), input) == sizeof(header));
             const int size = header[0] | (header[1] << 8) | (header[2] << 16) | (header[3] << 24);
@@ -176,30 +214,69 @@ static void CheckVp9PacketBackpressure() {
             assert(context.pendingFrames.empty());
             continue;
         }
-        assert(context.SendPacket(nullptr) == 0);
         int frames = 0;
-        while (true) {
-            AVFrame *frame = nullptr;
-            int result = context.ReceiveFrame(&frame);
-            if (result == AVERROR_EOF) {
+        // Consume the bitstream filter's pending input before signalling EOF.
+        for (bool draining : {false, true}) {
+            if (draining) assert(context.SendPacket(nullptr) == 0);
+            while (true) {
+                AVFrame *frame = nullptr;
+                int result = context.ReceiveFrame(&frame);
+                if (result == (draining ? AVERROR_EOF : AVERROR(EAGAIN))) {
+                    av_frame_free(&frame);
+                    break;
+                }
+                assert(result == 0);
+                assert(frame->pts == frames && frame->width == width && frame->height == height);
+                assert(frame->format == AV_PIX_FMT_YUV420P);
+                frames++;
                 av_frame_free(&frame);
-                break;
             }
-            assert(result == 0);
-            assert(frame->pts == frames && frame->width == 64 && frame->height == 48);
-            assert(frame->format == AV_PIX_FMT_YUV420P);
-            frames++;
-            av_frame_free(&frame);
         }
-        assert(frames == 24);
+        assert(frames == frameCount);
         assert(context.pendingFrames.empty());
     }
     fclose(input);
-    puts("PASS: VP9 packet backpressure loses no frames; reset clears pending output");
+    printf("PASS: %s packet backpressure loses no frames; reset clears pending output\n", filename);
+}
+
+static void CheckPacketErrorOrigins() {
+    JNINativeInterface functions{};
+    functions.GetDirectBufferAddress = [](JNIEnv *, jobject buffer) -> void * { return buffer; };
+    functions.GetDirectBufferCapacity = [](JNIEnv *, jobject) -> jlong {
+        return 1 + AV_INPUT_BUFFER_PADDING_SIZE;
+    };
+    JNIEnv env{&functions};
+    JniContext context;
+    uint8_t bytes[1 + AV_INPUT_BUFFER_PADDING_SIZE]{};
+    injectedReceiveError = AVERROR_INVALIDDATA;
+    lastErrorFunction = nullptr;
+    // The send is rejected before touching this input; decoding earlier data fails.
+    int result = Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegSendPacket(
+            &env, nullptr, reinterpret_cast<jlong>(&context), reinterpret_cast<jobject>(bytes), 1, 42);
+    assert(result == VIDEO_DECODER_ERROR_OTHER);
+    assert(lastErrorFunction && strcmp(lastErrorFunction, "avcodec_receive_frame") == 0);
+    assert(context.pendingFrames.empty());
+    puts("PASS: receive errors retain their origin and cannot skip unaccepted input");
+
+    const AVCodec *codec = avcodec_find_decoder_by_name("vp9");
+    context.codecContext = avcodec_alloc_context3(codec);
+    assert(context.codecContext && avcodec_open2(context.codecContext, codec, nullptr) == 0);
+    lastErrorFunction = nullptr;
+    // A malformed current packet is still skippable, unlike a receive failure.
+    result = Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegSendPacket(
+            &env, nullptr, reinterpret_cast<jlong>(&context), reinterpret_cast<jobject>(bytes), 1, 43);
+    assert(result == VIDEO_DECODER_ERROR_INVALID_DATA);
+    assert(lastErrorFunction && strcmp(lastErrorFunction, "avcodec_send_packet") == 0);
+    puts("PASS: invalid input retains its send error classification");
 }
 
 int main() {
-    CheckVp9PacketBackpressure();
+    CheckPacketErrorOrigins();
+    CheckVp9PacketBackpressure("vp9.ivf", 24, 64, 48);
+    int emptyReceivesBefore = emptyReceivesAfterBlockedSend;
+    CheckVp9PacketBackpressure("vp9-altref.ivf", 72, 128, 96);
+    assert(emptyReceivesAfterBlockedSend > emptyReceivesBefore);
+    puts("PASS: alt-ref hidden frames exercise send-EAGAIN followed by receive-EAGAIN");
     CheckVpDecoders();
     CheckColorsAndRange();
     CheckInvalidWindowBuffers();

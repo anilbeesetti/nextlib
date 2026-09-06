@@ -16,5 +16,5 @@ fi
     -L"$repo/ffmpeg/output/lib/arm64-v8a" -lavcodec -lavutil -lswscale -lswresample \
     -landroid -lmediandk -llog -o "$build/ffvideo_test"
 adb shell mkdir -p /data/local/tmp/nextlib-ffvideo-test
-adb push "$repo/media3ext/src/test/cpp/fixtures/vp9.ivf" "$build/ffvideo_test" "$repo"/ffmpeg/output/lib/arm64-v8a/*.so /data/local/tmp/nextlib-ffvideo-test/ >/dev/null
+adb push "$repo/media3ext/src/test/cpp/fixtures/"*.ivf "$build/ffvideo_test" "$repo"/ffmpeg/output/lib/arm64-v8a/*.so /data/local/tmp/nextlib-ffvideo-test/ >/dev/null
 adb shell 'cd /data/local/tmp/nextlib-ffvideo-test && LD_LIBRARY_PATH=. ./ffvideo_test'
