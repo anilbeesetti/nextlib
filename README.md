@@ -6,7 +6,7 @@ NextLib is a library for adding ffmpeg codecs to [Media3](https://github.com/and
 
 ## Currently supported decoders
 - **Audio**: Vorbis, Opus, Flac, Alac, pcm_mulaw, pcm_alaw, MP3, Amrnb, Amrwb, AAC, AC3, EAC3, dca, mlp, truehd
-- **Video**: H.264, HEVC, VP8, VP9
+- **Video**: H.264, HEVC, VP8, VP9 (using FFmpeg’s built-in decoders)
 
 ## Setup
 Kotlin DSL:

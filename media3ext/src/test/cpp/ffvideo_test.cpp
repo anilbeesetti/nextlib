@@ -128,7 +128,79 @@ static void CheckInvalidWindowBuffers() {
     puts("PASS: five invalid buffer cases publish no image; same Surface renders after each error");
 }
 
+static void CheckVpDecoders() {
+    for (AVCodecID id : {AV_CODEC_ID_VP8, AV_CODEC_ID_VP9}) {
+        const char *name = id == AV_CODEC_ID_VP8 ? "vp8" : "vp9";
+        const AVCodec *codec = avcodec_find_decoder_by_name(name);
+        assert(codec && codec->id == id);
+        // Both Media3's name lookup and MediaInfo's codec-ID lookup use the native decoder.
+        assert(avcodec_find_decoder(id) == codec);
+        AVCodecContext *context = avcodec_alloc_context3(codec);
+        assert(context && avcodec_open2(context, codec, nullptr) == 0);
+        avcodec_free_context(&context);
+    }
+    assert(!avcodec_find_decoder_by_name("libvpx"));
+    assert(!avcodec_find_decoder_by_name("libvpx-vp9"));
+    puts("PASS: built-in VP8/VP9 decoders are available and libvpx decoders are absent");
+}
+
+static void CheckVp9PacketBackpressure() {
+    JniContext context;
+    const AVCodec *codec = avcodec_find_decoder_by_name("vp9");
+    context.codecContext = avcodec_alloc_context3(codec);
+    assert(context.codecContext);
+    context.codecContext->thread_count = 4;
+    assert(avcodec_open2(context.codecContext, codec, nullptr) == 0);
+
+    FILE *input = fopen("vp9.ivf", "rb");
+    assert(input);
+    for (int pass = 0; pass < 2; pass++) {
+        assert(fseek(input, 32, SEEK_SET) == 0); // IVF file header.
+        for (int index = 0; index < 24; index++) {
+            uint8_t header[12];
+            assert(fread(header, 1, sizeof(header), input) == sizeof(header));
+            const int size = header[0] | (header[1] << 8) | (header[2] << 16) | (header[3] << 24);
+            AVPacket *packet = av_packet_alloc();
+            assert(packet && av_new_packet(packet, size) == 0);
+            assert(fread(packet->data, 1, size, input) == static_cast<size_t>(size));
+            packet->pts = index;
+            // Deliberately withhold output to force send_packet(EAGAIN).
+            assert(context.SendPacket(packet) == 0);
+            av_packet_free(&packet);
+        }
+        assert(!context.pendingFrames.empty());
+        if (pass == 0) {
+            // Seeking must discard held output and let the same decoder start again.
+            assert(Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegReset(
+                    nullptr, nullptr, reinterpret_cast<jlong>(&context)) != 0);
+            assert(context.pendingFrames.empty());
+            continue;
+        }
+        assert(context.SendPacket(nullptr) == 0);
+        int frames = 0;
+        while (true) {
+            AVFrame *frame = nullptr;
+            int result = context.ReceiveFrame(&frame);
+            if (result == AVERROR_EOF) {
+                av_frame_free(&frame);
+                break;
+            }
+            assert(result == 0);
+            assert(frame->pts == frames && frame->width == 64 && frame->height == 48);
+            assert(frame->format == AV_PIX_FMT_YUV420P);
+            frames++;
+            av_frame_free(&frame);
+        }
+        assert(frames == 24);
+        assert(context.pendingFrames.empty());
+    }
+    fclose(input);
+    puts("PASS: VP9 packet backpressure loses no frames; reset clears pending output");
+}
+
 int main() {
+    CheckVp9PacketBackpressure();
+    CheckVpDecoders();
     CheckColorsAndRange();
     CheckInvalidWindowBuffers();
 }
