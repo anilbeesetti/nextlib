@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <android/native_window_jni.h>
 #include <algorithm>
+#include <array>
+#include <climits>
 #include <cstring>
 #include <memory>
 #include "ffcommon.h"
@@ -72,10 +74,66 @@ static const int VIDEO_DECODER_ERROR_READ_FRAME = -3;
 // Media3 C.VIDEO_OUTPUT_MODE_SURFACE_YUV.
 constexpr int kOutputModeSurface = 1;
 
+// Media3's GL renderer uses BT.709 when the matrix is unknown.
+static int GetOutputColorspace(AVColorSpace colorspace) {
+    switch (colorspace) {
+        case AVCOL_SPC_BT709: return 2;
+        case AVCOL_SPC_BT470BG:
+        case AVCOL_SPC_SMPTE170M: return 1;
+        case AVCOL_SPC_BT2020_NCL: return 3;
+        default: return 0;
+    }
+}
+
+struct ScaleContext {
+    ~ScaleContext() { sws_freeContext(context); }
+
+    SwsContext *Get(const AVFrame *frame, AVPixelFormat output_format) {
+        const int colorspace = GetOutputColorspace(frame->colorspace);
+        const int matrix = colorspace == 1 ? SWS_CS_ITU601 :
+                colorspace == 3 ? SWS_CS_BT2020 : SWS_CS_ITU709;
+        const int full_range = frame->color_range == AVCOL_RANGE_JPEG;
+        const std::array<int, 6> configuration = {frame->width, frame->height,
+                frame->format, output_format, matrix, full_range};
+        if (context && configuration == cached_configuration) return context;
+
+        sws_freeContext(context);
+        context = sws_alloc_context();
+        if (!context) return nullptr;
+        const int *coefficients = sws_getCoefficients(matrix);
+        // Range must be set BEFORE initialization: otherwise swscale can choose an
+        // unscaled planar copy that ignores a subsequent full-to-limited range change.
+        if (av_opt_set_int(context, "srcw", frame->width, 0) < 0 ||
+            av_opt_set_int(context, "srch", frame->height, 0) < 0 ||
+            av_opt_set_int(context, "src_format", frame->format, 0) < 0 ||
+            av_opt_set_int(context, "dstw", frame->width, 0) < 0 ||
+            av_opt_set_int(context, "dsth", frame->height, 0) < 0 ||
+            av_opt_set_int(context, "dst_format", output_format, 0) < 0 ||
+            av_opt_set_int(context, "sws_flags", SWS_BILINEAR, 0) < 0 ||
+            sws_setColorspaceDetails(context, coefficients, full_range, coefficients,
+                    output_format == AV_PIX_FMT_RGBA, 0, 1 << 16, 1 << 16) < 0 ||
+            sws_init_context(context, nullptr, nullptr) < 0) {
+            sws_freeContext(context);
+            context = nullptr;
+        }
+        cached_configuration = configuration;
+        return context;
+    }
+
+    SwsContext *context{};
+    std::array<int, 6> cached_configuration{};
+};
+
+// Surface::disconnect clears its buffer slots. Unlocking afterwards releases the
+// CPU mapping, but queueBuffer rejects the removed slot instead of displaying it.
+// The public NDK has no unlock-without-post operation.
+static void DiscardLockedBuffer(ANativeWindow *window) {
+    native_window_api_disconnect(window, NATIVE_WINDOW_API_CPU);
+    ANativeWindow_unlockAndPost(window);
+}
+
 struct JniContext {
     ~JniContext() {
-        sws_freeContext(renderContext);
-        sws_freeContext(yuvContext);
         releaseContext(codecContext);
     }
 
@@ -115,8 +173,8 @@ struct JniContext {
 
     AVCodecContext *codecContext{};
     // Decoding and rendering run on different threads.
-    SwsContext *renderContext{};
-    SwsContext *yuvContext{};
+    ScaleContext renderContext;
+    ScaleContext yuvContext;
 
     ANativeWindow *native_window = nullptr;
     jobject surface = nullptr;
@@ -221,21 +279,6 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     av_frame_free(&frame);
 }
 
-// Convert using metadata from this frame, not the decoder's next queued frame.
-static SwsContext *GetScaleContext(SwsContext *context, const AVFrame *frame,
-                                   AVPixelFormat output_format) {
-    context = sws_getCachedContext(context, frame->width, frame->height,
-            static_cast<AVPixelFormat>(frame->format), frame->width, frame->height,
-            output_format, SWS_BILINEAR, nullptr, nullptr, nullptr);
-    if (context) {
-        const int *coefficients = sws_getCoefficients(
-                frame->colorspace == AVCOL_SPC_UNSPECIFIED ? SWS_CS_DEFAULT : frame->colorspace);
-        sws_setColorspaceDetails(context, coefficients, frame->color_range == AVCOL_RANGE_JPEG,
-                coefficients, output_format == AV_PIX_FMT_RGBA, 0, 1 << 16, 1 << 16);
-    }
-    return context;
-}
-
 extern "C"
 JNIEXPORT jint JNICALL
 Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegRenderFrame(JNIEnv *env,
@@ -263,8 +306,8 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         jniContext->native_window_width = frame->width;
         jniContext->native_window_height = frame->height;
     }
-    jniContext->renderContext = GetScaleContext(jniContext->renderContext, frame, AV_PIX_FMT_RGBA);
-    if (!jniContext->renderContext) return VIDEO_DECODER_ERROR_OTHER;
+    SwsContext *scaleContext = jniContext->renderContext.Get(frame, AV_PIX_FMT_RGBA);
+    if (!scaleContext) return VIDEO_DECODER_ERROR_OTHER;
 
     ANativeWindow_Buffer buffer;
     int result = ANativeWindow_lock(jniContext->native_window, &buffer, nullptr);
@@ -277,14 +320,21 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
 
     int rows = 0;
     if (buffer.bits && buffer.format == WINDOW_FORMAT_RGBA_8888 &&
-        buffer.width >= frame->width && buffer.height >= frame->height) {
+        buffer.width >= frame->width && buffer.height >= frame->height &&
+        buffer.stride >= buffer.width && buffer.stride <= INT_MAX / 4) {
         uint8_t *dest[] = {static_cast<uint8_t *>(buffer.bits), nullptr, nullptr, nullptr};
         int strides[] = {buffer.stride * 4, 0, 0, 0};
-        rows = sws_scale(jniContext->renderContext, frame->data, frame->linesize,
+        rows = sws_scale(scaleContext, frame->data, frame->linesize,
                         0, frame->height, dest, strides);
     }
+    if (rows != frame->height) {
+        DiscardLockedBuffer(jniContext->native_window);
+        jniContext->connected_as_cpu = false;
+        jniContext->ReleaseSurface(env);
+        return VIDEO_DECODER_ERROR_OTHER;
+    }
     result = ANativeWindow_unlockAndPost(jniContext->native_window);
-    return !result && rows == frame->height ? VIDEO_DECODER_SUCCESS : VIDEO_DECODER_ERROR_OTHER;
+    return !result ? VIDEO_DECODER_SUCCESS : VIDEO_DECODER_ERROR_OTHER;
 }
 
 extern "C"
@@ -382,8 +432,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     // Media3's YUV output contract is always planar 8-bit 4:2:0, even for 10-bit/4:4:4 input.
     const int yStride = ALIGN(frame->width, 32);
     const int uvStride = ALIGN((frame->width + 1) / 2, 16);
-    const int colorspace = frame->colorspace == AVCOL_SPC_BT709 ? 2 :
-            frame->colorspace == AVCOL_SPC_BT2020_NCL ? 3 : 1;
+    const int colorspace = GetOutputColorspace(frame->colorspace);
     const jboolean initialized = env->CallBooleanMethod(output_buffer,
             jniContext->init_for_yuv_frame_method, frame->width, frame->height,
             yStride, uvStride, colorspace);
@@ -397,8 +446,8 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     const size_t uvLength = static_cast<size_t>(uvStride) * ((frame->height + 1) / 2);
     uint8_t *dest[] = {data, data + yLength, data + yLength + uvLength, nullptr};
     int strides[] = {yStride, uvStride, uvStride, 0};
-    jniContext->yuvContext = GetScaleContext(jniContext->yuvContext, frame, AV_PIX_FMT_YUV420P);
-    result = jniContext->yuvContext ? sws_scale(jniContext->yuvContext, frame->data,
+    SwsContext *scaleContext = jniContext->yuvContext.Get(frame, AV_PIX_FMT_YUV420P);
+    result = scaleContext ? sws_scale(scaleContext, frame->data,
             frame->linesize, 0, frame->height, dest, strides) : 0;
     const bool success = result == frame->height;
     av_frame_free(&frame);

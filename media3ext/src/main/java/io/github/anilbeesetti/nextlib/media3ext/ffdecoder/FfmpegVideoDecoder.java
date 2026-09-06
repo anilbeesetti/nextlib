@@ -15,6 +15,7 @@ import androidx.media3.decoder.SimpleDecoder;
 import androidx.media3.decoder.VideoDecoderOutputBuffer;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -25,8 +26,6 @@ final class FfmpegVideoDecoder extends
         SimpleDecoder<DecoderInputBuffer, VideoDecoderOutputBuffer, FfmpegDecoderException> {
 
     private static final String TAG = "FfmpegVideoDecoder";
-    // FFmpeg AV_INPUT_BUFFER_PADDING_SIZE; the native sender zeroes this padding.
-    private static final int INPUT_BUFFER_PADDING_SIZE = 64;
 
     // LINT.IfChange
     private static final int VIDEO_DECODER_SUCCESS = 0;
@@ -37,6 +36,9 @@ final class FfmpegVideoDecoder extends
 
     private final String codecName;
     private long nativeContext;
+    // Initialized by createOutputBuffer() during the SimpleDecoder constructor.
+    // Keep every buffer, including outputs held by a renderer during decoder reinitialization.
+    private List<VideoDecoderOutputBuffer> outputBuffers;
     @Nullable
     private final byte[] extraData;
     private Format format;
@@ -113,21 +115,30 @@ final class FfmpegVideoDecoder extends
 
     @Override
     protected DecoderInputBuffer createInputBuffer() {
-        return new DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT, INPUT_BUFFER_PADDING_SIZE);
+        return new DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT, FfmpegLibrary.getInputBufferPaddingSize());
     }
 
     @Override
     protected VideoDecoderOutputBuffer createOutputBuffer() {
-        return new VideoDecoderOutputBuffer(this::releaseOutputBuffer);
+        if (outputBuffers == null) outputBuffers = new ArrayList<>();
+        VideoDecoderOutputBuffer outputBuffer = new VideoDecoderOutputBuffer(this::releaseOutputBuffer);
+        outputBuffers.add(outputBuffer);
+        return outputBuffer;
     }
 
     @Override
     protected void releaseOutputBuffer(VideoDecoderOutputBuffer outputBuffer) {
+        synchronized (outputBuffers) {
+            releaseNativeFrame(outputBuffer);
+        }
+        super.releaseOutputBuffer(outputBuffer);
+    }
+
+    private void releaseNativeFrame(VideoDecoderOutputBuffer outputBuffer) {
         if (outputBuffer.decoderPrivate != 0) {
             ffmpegReleaseFrame(outputBuffer.decoderPrivate);
             outputBuffer.decoderPrivate = 0;
         }
-        super.releaseOutputBuffer(outputBuffer);
     }
 
     @Override
@@ -183,10 +194,15 @@ final class FfmpegVideoDecoder extends
     @Override
     public void release() {
         super.release();
-        // SimpleDecoder stops its thread but does not release queued output buffers.
-        flush();
-        ffmpegRelease(nativeContext);
-        nativeContext = 0;
+        // The decode thread has stopped. Reclaim queued and renderer-held frames together;
+        // clearing decoderPrivate also makes a later outputBuffer.release() harmless.
+        synchronized (outputBuffers) {
+            for (VideoDecoderOutputBuffer outputBuffer : outputBuffers) {
+                releaseNativeFrame(outputBuffer);
+            }
+            ffmpegRelease(nativeContext);
+            nativeContext = 0;
+        }
     }
 
     /**
