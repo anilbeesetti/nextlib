@@ -260,7 +260,10 @@ static void CheckPacketErrorOrigins() {
 
     const AVCodec *codec = avcodec_find_decoder_by_name("vp9");
     context.codecContext = avcodec_alloc_context3(codec);
-    assert(context.codecContext && avcodec_open2(context.codecContext, codec, nullptr) == 0);
+    assert(context.codecContext);
+    // Keep invalid-input errors synchronous; backpressure tests cover frame threading.
+    context.codecContext->thread_count = 1;
+    assert(avcodec_open2(context.codecContext, codec, nullptr) == 0);
     lastErrorFunction = nullptr;
     // A malformed current packet is still skippable, unlike a receive failure.
     result = Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegSendPacket(
