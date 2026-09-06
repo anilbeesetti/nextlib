@@ -113,3 +113,6 @@ This checks decoder discovery by both name and codec ID, 8-bit and 10-bit output
 film-grain decoding, one output frame per sample with no delayed frames at EOS,
 and decoding again after a seek/flush. AV1 uses dav1d's low-delay mode to match
 Media3's `SimpleDecoder` input/output contract.
+
+See [AV1 verification](media3ext/AV1_VERIFICATION.md) for the Next Player playback
+checks and tested device coverage.
