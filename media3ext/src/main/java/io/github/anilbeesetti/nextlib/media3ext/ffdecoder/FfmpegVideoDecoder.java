@@ -25,6 +25,8 @@ final class FfmpegVideoDecoder extends
         SimpleDecoder<DecoderInputBuffer, VideoDecoderOutputBuffer, FfmpegDecoderException> {
 
     private static final String TAG = "FfmpegVideoDecoder";
+    // FFmpeg AV_INPUT_BUFFER_PADDING_SIZE; the native sender zeroes this padding.
+    private static final int INPUT_BUFFER_PADDING_SIZE = 64;
 
     // LINT.IfChange
     private static final int VIDEO_DECODER_SUCCESS = 0;
@@ -111,12 +113,21 @@ final class FfmpegVideoDecoder extends
 
     @Override
     protected DecoderInputBuffer createInputBuffer() {
-        return new DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT);
+        return new DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT, INPUT_BUFFER_PADDING_SIZE);
     }
 
     @Override
     protected VideoDecoderOutputBuffer createOutputBuffer() {
         return new VideoDecoderOutputBuffer(this::releaseOutputBuffer);
+    }
+
+    @Override
+    protected void releaseOutputBuffer(VideoDecoderOutputBuffer outputBuffer) {
+        if (outputBuffer.decoderPrivate != 0) {
+            ffmpegReleaseFrame(outputBuffer.decoderPrivate);
+            outputBuffer.decoderPrivate = 0;
+        }
+        super.releaseOutputBuffer(outputBuffer);
     }
 
     @Override
@@ -172,6 +183,8 @@ final class FfmpegVideoDecoder extends
     @Override
     public void release() {
         super.release();
+        // SimpleDecoder stops its thread but does not release queued output buffers.
+        flush();
         ffmpegRelease(nativeContext);
         nativeContext = 0;
     }
@@ -202,6 +215,8 @@ final class FfmpegVideoDecoder extends
     private native long ffmpegReset(long context);
 
     private native void ffmpegRelease(long context);
+
+    private native void ffmpegReleaseFrame(long frame);
 
     private native int ffmpegRenderFrame(
             long context, Surface surface, VideoDecoderOutputBuffer outputBuffer,
