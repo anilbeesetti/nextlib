@@ -4,6 +4,10 @@
 #include <cstdlib>
 #include <android/native_window_jni.h>
 #include <algorithm>
+#include <array>
+#include <climits>
+#include <cstring>
+#include <memory>
 #include "ffcommon.h"
 
 extern "C" {
@@ -67,57 +71,111 @@ static const int VIDEO_DECODER_ERROR_OTHER = -2;
 static const int VIDEO_DECODER_ERROR_READ_FRAME = -3;
 
 
-// YUV plane indices.
-const int kPlaneY = 0;
-const int kPlaneU = 1;
-const int kPlaneV = 2;
-const int kMaxPlanes = 3;
+// Media3 C.VIDEO_OUTPUT_MODE_SURFACE_YUV.
+constexpr int kOutputModeSurface = 1;
 
-// Android YUV format. See:
-// https://developer.android.com/reference/android/graphics/ImageFormat.html#YV12.
-const int kImageFormatYV12 = 0x32315659;
+// Media3's GL renderer uses BT.709 when the matrix is unknown.
+static int GetOutputColorspace(AVColorSpace colorspace) {
+    switch (colorspace) {
+        case AVCOL_SPC_BT709: return 2;
+        case AVCOL_SPC_BT470BG:
+        case AVCOL_SPC_SMPTE170M: return 1;
+        case AVCOL_SPC_BT2020_NCL: return 3;
+        default: return 0;
+    }
+}
+
+struct ScaleContext {
+    ~ScaleContext() { sws_freeContext(context); }
+
+    SwsContext *Get(const AVFrame *frame, AVPixelFormat output_format) {
+        const int colorspace = GetOutputColorspace(frame->colorspace);
+        const int matrix = colorspace == 1 ? SWS_CS_ITU601 :
+                colorspace == 3 ? SWS_CS_BT2020 : SWS_CS_ITU709;
+        const int full_range = frame->color_range == AVCOL_RANGE_JPEG;
+        const std::array<int, 6> configuration = {frame->width, frame->height,
+                frame->format, output_format, matrix, full_range};
+        if (context && configuration == cached_configuration) return context;
+
+        sws_freeContext(context);
+        context = sws_alloc_context();
+        if (!context) return nullptr;
+        const int *coefficients = sws_getCoefficients(matrix);
+        // Range must be set BEFORE initialization: otherwise swscale can choose an
+        // unscaled planar copy that ignores a subsequent full-to-limited range change.
+        if (av_opt_set_int(context, "srcw", frame->width, 0) < 0 ||
+            av_opt_set_int(context, "srch", frame->height, 0) < 0 ||
+            av_opt_set_int(context, "src_format", frame->format, 0) < 0 ||
+            av_opt_set_int(context, "dstw", frame->width, 0) < 0 ||
+            av_opt_set_int(context, "dsth", frame->height, 0) < 0 ||
+            av_opt_set_int(context, "dst_format", output_format, 0) < 0 ||
+            av_opt_set_int(context, "sws_flags", SWS_BILINEAR, 0) < 0 ||
+            sws_setColorspaceDetails(context, coefficients, full_range, coefficients,
+                    output_format == AV_PIX_FMT_RGBA, 0, 1 << 16, 1 << 16) < 0 ||
+            sws_init_context(context, nullptr, nullptr) < 0) {
+            sws_freeContext(context);
+            context = nullptr;
+        }
+        cached_configuration = configuration;
+        return context;
+    }
+
+    SwsContext *context{};
+    std::array<int, 6> cached_configuration{};
+};
+
+// Surface::disconnect clears its buffer slots. Unlocking afterwards releases the
+// CPU mapping, but queueBuffer rejects the removed slot instead of displaying it.
+// The public NDK has no unlock-without-post operation.
+static int DiscardLockedBuffer(ANativeWindow *window) {
+    const int result = native_window_api_disconnect(window, NATIVE_WINDOW_API_CPU);
+    ANativeWindow_unlockAndPost(window);
+    return result;
+}
 
 struct JniContext {
     ~JniContext() {
+        releaseContext(codecContext);
+    }
+
+    void ReleaseSurface(JNIEnv *env) {
         if (native_window) {
             if (connected_as_cpu) {
                 native_window_api_disconnect(native_window, NATIVE_WINDOW_API_CPU);
             }
             ANativeWindow_release(native_window);
         }
+        if (surface) env->DeleteGlobalRef(surface);
+        native_window = nullptr;
+        surface = nullptr;
+        connected_as_cpu = false;
+        native_window_width = 0;
+        native_window_height = 0;
     }
 
     bool MaybeAcquireNativeWindow(JNIEnv *env, jobject new_surface) {
-        if (surface == new_surface) {
-            return true;
-        }
-        if (native_window) {
-            if (connected_as_cpu) {
-                native_window_api_disconnect(native_window, NATIVE_WINDOW_API_CPU);
-                connected_as_cpu = false;
-            }
-            ANativeWindow_release(native_window);
-        }
-        native_window_width = 0;
-        native_window_height = 0;
+        if (surface && env->IsSameObject(surface, new_surface)) return true;
+        ReleaseSurface(env);
         native_window = ANativeWindow_fromSurface(env, new_surface);
-        if (native_window == nullptr) {
-            LOGE("kJniStatusANativeWindowError");
-            surface = nullptr;
+        if (!native_window) return false;
+        surface = env->NewGlobalRef(new_surface);
+        if (!surface) {
+            ReleaseSurface(env);
             return false;
         }
-        surface = new_surface;
         return true;
     }
 
     jfieldID data_field{};
-    jfieldID yuvPlanes_field{};
-    jfieldID yuvStrides_field{};
+    jfieldID decoder_private_field{};
+    jmethodID init_for_private_frame_method{};
     jmethodID init_for_yuv_frame_method{};
     jmethodID init_method{};
 
     AVCodecContext *codecContext{};
-    SwsContext *swsContext{};
+    // Decoding and rendering run on different threads.
+    ScaleContext renderContext;
+    ScaleContext yuvContext;
 
     ANativeWindow *native_window = nullptr;
     jobject surface = nullptr;
@@ -130,7 +188,7 @@ JniContext *createVideoContext(JNIEnv *env,
                                AVCodec *codec,
                                jbyteArray extraData,
                                jint threads) {
-    auto *jniContext = new JniContext();
+    auto jniContext = std::make_unique<JniContext>();
 
     AVCodecContext *codecContext = avcodec_alloc_context3(codec);
     if (!codecContext) {
@@ -138,13 +196,14 @@ JniContext *createVideoContext(JNIEnv *env,
         return nullptr;
     }
 
+    jniContext->codecContext = codecContext;
+
     if (extraData) {
         jsize size = env->GetArrayLength(extraData);
         codecContext->extradata_size = size;
-        codecContext->extradata = (uint8_t *) av_malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
+        codecContext->extradata = (uint8_t *) av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE);
         if (!codecContext->extradata) {
             LOGE("Failed to allocate extradata.");
-            releaseContext(codecContext);
             return nullptr;
         }
         env->GetByteArrayRegion(extraData, 0, size, (jbyte *) codecContext->extradata);
@@ -155,21 +214,19 @@ JniContext *createVideoContext(JNIEnv *env,
     int result = avcodec_open2(codecContext, codec, nullptr);
     if (result < 0) {
         logError("avcodec_open2", result);
-        releaseContext(codecContext);
         return nullptr;
     }
-
-    jniContext->codecContext = codecContext;
 
     // Populate JNI References.
     jclass outputBufferClass = env->FindClass("androidx/media3/decoder/VideoDecoderOutputBuffer");
     jniContext->data_field = env->GetFieldID(outputBufferClass, "data", "Ljava/nio/ByteBuffer;");
-    jniContext->yuvStrides_field = env->GetFieldID(outputBufferClass, "yuvStrides", "[I");
-    jniContext->yuvPlanes_field = env->GetFieldID(outputBufferClass, "yuvPlanes", "[Ljava/nio/ByteBuffer;");
+    jniContext->decoder_private_field = env->GetFieldID(outputBufferClass, "decoderPrivate", "J");
+    jniContext->init_for_private_frame_method = env->GetMethodID(outputBufferClass, "initForPrivateFrame", "(II)V");
     jniContext->init_for_yuv_frame_method = env->GetMethodID(outputBufferClass, "initForYuvFrame", "(IIIII)Z");
     jniContext->init_method = env->GetMethodID(outputBufferClass, "init", "(JILjava/nio/ByteBuffer;)V");
 
-    return jniContext;
+    if (env->ExceptionCheck()) return nullptr;
+    return jniContext.release();
 }
 
 
@@ -209,12 +266,18 @@ JNIEXPORT void JNICALL
 Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegRelease(JNIEnv *env, jobject thiz,
                                                                               jlong jContext) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
-    AVCodecContext *context = jniContext->codecContext;
-    if (context) {
-        sws_freeContext(jniContext->swsContext);
-        releaseContext(context);
+    if (jniContext) {
+        jniContext->ReleaseSurface(env);
         delete jniContext;
     }
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegReleaseFrame(
+        JNIEnv *, jobject, jlong frame_pointer) {
+    auto *frame = reinterpret_cast<AVFrame *>(frame_pointer);
+    av_frame_free(&frame);
 }
 
 extern "C"
@@ -227,114 +290,51 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                   jint displayed_width,
                                                                                   jint displayed_height) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
-    if (!jniContext->MaybeAcquireNativeWindow(env, surface)) {
+    auto *frame = reinterpret_cast<AVFrame *>(
+            env->GetLongField(output_buffer, jniContext->decoder_private_field));
+    if (!frame || !jniContext->MaybeAcquireNativeWindow(env, surface)) {
         return VIDEO_DECODER_ERROR_OTHER;
     }
 
-    if (jniContext->native_window_width != displayed_width ||
-        jniContext->native_window_height != displayed_height) {
-
-        if (ANativeWindow_setBuffersGeometry(
-                jniContext->native_window,
-                displayed_width,
-                displayed_height,
-                kImageFormatYV12)) {
-            LOGE("kJniStatusANativeWindowError");
+    if (jniContext->native_window_width != frame->width ||
+        jniContext->native_window_height != frame->height) {
+        // RGBA is a public NDK window format; YV12 CPU buffers are not portable
+        // across Surface producers (including the emulator's graphics backend).
+        if (ANativeWindow_setBuffersGeometry(jniContext->native_window,
+                frame->width, frame->height, WINDOW_FORMAT_RGBA_8888)) {
             return VIDEO_DECODER_ERROR_OTHER;
         }
-
-        jniContext->native_window_width = displayed_width;
-        jniContext->native_window_height = displayed_height;
-
-        // Initializing swsContext with AV_PIX_FMT_YUV420P, which is equivalent to YV12.
-        // The only difference is the order of the u and v planes.
-        SwsContext *swsContext = sws_getContext(displayed_width, displayed_height,
-                                                jniContext->codecContext->pix_fmt,
-                                                displayed_width, displayed_height,
-                                                AV_PIX_FMT_YUV420P,
-                                                SWS_BILINEAR, nullptr, nullptr, nullptr);
-
-        if (!swsContext) {
-            LOGE("Failed to allocate swsContext.");
-            return VIDEO_DECODER_ERROR_OTHER;
-        }
-        jniContext->swsContext = swsContext;
+        jniContext->native_window_width = frame->width;
+        jniContext->native_window_height = frame->height;
     }
+    SwsContext *scaleContext = jniContext->renderContext.Get(frame, AV_PIX_FMT_RGBA);
+    if (!scaleContext) return VIDEO_DECODER_ERROR_OTHER;
 
-    ANativeWindow_Buffer native_window_buffer;
-    int result = ANativeWindow_lock(jniContext->native_window, &native_window_buffer, nullptr);
+    ANativeWindow_Buffer buffer;
+    int result = ANativeWindow_lock(jniContext->native_window, &buffer, nullptr);
     if (result == -19) {
-        jniContext->surface = nullptr;
+        jniContext->ReleaseSurface(env);
         return VIDEO_DECODER_SUCCESS;
-    } else if (result || native_window_buffer.bits == nullptr) {
-        LOGE("kJniStatusANativeWindowError");
-        return VIDEO_DECODER_ERROR_OTHER;
     }
-    // A successful lock connects the native window to the CPU producer API.
+    if (result) return VIDEO_DECODER_ERROR_OTHER;
     jniContext->connected_as_cpu = true;
 
-    // source planes from VideoDecoderOutputBuffer
-    jobject yuvPlanes_object = env->GetObjectField(output_buffer, jniContext->yuvPlanes_field);
-    auto yuvPlanes_array = jobjectArray(yuvPlanes_object);
-    jobject yuvPlanesY = env->GetObjectArrayElement(yuvPlanes_array, kPlaneY);
-    jobject yuvPlanesU = env->GetObjectArrayElement(yuvPlanes_array, kPlaneU);
-    jobject yuvPlanesV = env->GetObjectArrayElement(yuvPlanes_array, kPlaneV);
-
-    auto *planeY = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(yuvPlanesY));
-    auto *planeU = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(yuvPlanesU));
-    auto *planeV = reinterpret_cast<uint8_t *>(env->GetDirectBufferAddress(yuvPlanesV));
-
-    // source strides from VideoDecoderOutputBuffer
-    jobject yuvStrides_object = env->GetObjectField(output_buffer, jniContext->yuvStrides_field);
-    auto *yuvStrides_array = reinterpret_cast<jintArray *>(&yuvStrides_object);
-    int *yuvStrides = env->GetIntArrayElements(*yuvStrides_array, nullptr);
-
-    int strideY = yuvStrides[kPlaneY];
-    int strideU = yuvStrides[kPlaneU];
-    int strideV = yuvStrides[kPlaneV];
-
-
-    const int32_t native_window_buffer_uv_height = (native_window_buffer.height + 1) / 2;
-    auto native_window_buffer_bits = reinterpret_cast<uint8_t *>(native_window_buffer.bits);
-    const int native_window_buffer_uv_stride = ALIGN(native_window_buffer.stride / 2, 16);
-    const int v_plane_height = std::min(native_window_buffer_uv_height, displayed_height);
-
-    const int y_plane_size = native_window_buffer.stride * native_window_buffer.height;
-    const int v_plane_size = v_plane_height * native_window_buffer_uv_stride;
-
-    // source data
-    uint8_t *src[3] = {planeY, planeU, planeV};
-
-    // source strides
-    int src_stride[3] = {strideY, strideU, strideV};
-
-    // destination data with u and v swapped
-    uint8_t *dest[3] = {native_window_buffer_bits,
-                        native_window_buffer_bits + y_plane_size + v_plane_size,
-                        native_window_buffer_bits + y_plane_size};
-
-    // destination strides
-    int dest_stride[3] = {native_window_buffer.stride,
-                          native_window_buffer_uv_stride,
-                          native_window_buffer_uv_stride};
-
-
-    //Perform color space conversion using sws_scale.
-    //Convert the source data (src) with specified strides (src_stride) and displayed height,
-    //and store the result in the destination data (dest) with corresponding strides (dest_stride).
-    sws_scale(jniContext->swsContext,
-              src, src_stride,
-              0, displayed_height,
-              dest, dest_stride);
-
-    env->ReleaseIntArrayElements(*yuvStrides_array, yuvStrides, 0);
-
-    if (ANativeWindow_unlockAndPost(jniContext->native_window)) {
-        LOGE("kJniStatusANativeWindowError");
+    int rows = 0;
+    if (buffer.bits && buffer.format == WINDOW_FORMAT_RGBA_8888 &&
+        buffer.width >= frame->width && buffer.height >= frame->height &&
+        buffer.stride >= buffer.width && buffer.stride <= INT_MAX / 4) {
+        uint8_t *dest[] = {static_cast<uint8_t *>(buffer.bits), nullptr, nullptr, nullptr};
+        int strides[] = {buffer.stride * 4, 0, 0, 0};
+        rows = sws_scale(scaleContext, frame->data, frame->linesize,
+                        0, frame->height, dest, strides);
+    }
+    if (rows != frame->height) {
+        jniContext->connected_as_cpu = DiscardLockedBuffer(jniContext->native_window) != 0;
+        jniContext->ReleaseSurface(env);
         return VIDEO_DECODER_ERROR_OTHER;
     }
-
-    return VIDEO_DECODER_SUCCESS;
+    result = ANativeWindow_unlockAndPost(jniContext->native_window);
+    return !result ? VIDEO_DECODER_SUCCESS : VIDEO_DECODER_ERROR_OTHER;
 }
 
 extern "C"
@@ -349,7 +349,14 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     AVCodecContext *avContext = jniContext->codecContext;
 
     auto *inputBuffer = (uint8_t *) env->GetDirectBufferAddress(encoded_data);
-    AVPacket packet = *av_packet_alloc();
+    if (!inputBuffer || length < 0 ||
+        env->GetDirectBufferCapacity(encoded_data) < static_cast<jlong>(length) + AV_INPUT_BUFFER_PADDING_SIZE) {
+        return VIDEO_DECODER_ERROR_OTHER;
+    }
+    memset(inputBuffer + length, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+    AVPacket packet{};
+    packet.dts = AV_NOPTS_VALUE;
+    packet.pos = -1;
     packet.data = inputBuffer;
     packet.size = length;
     packet.pts = input_time;
@@ -403,38 +410,46 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         return VIDEO_DECODER_ERROR_OTHER;
     }
 
-    // success
-    // init time and mode
     env->CallVoidMethod(output_buffer, jniContext->init_method, frame->pts, output_mode, nullptr);
-
-    // init data
-    const jboolean init_result = env->CallBooleanMethod(
-            output_buffer, jniContext->init_for_yuv_frame_method,
-            frame->width,
-            frame->height,
-            frame->linesize[0], frame->linesize[1],
-            0);
     if (env->ExceptionCheck()) {
-        // Exception is thrown in Java when returning from the native call.
+        av_frame_free(&frame);
         return VIDEO_DECODER_ERROR_OTHER;
     }
-    if (!init_result) {
-        return VIDEO_DECODER_ERROR_OTHER;
+    if (output_mode == kOutputModeSurface) {
+        env->CallVoidMethod(output_buffer, jniContext->init_for_private_frame_method,
+                           frame->width, frame->height);
+        if (env->ExceptionCheck()) {
+            av_frame_free(&frame);
+            return VIDEO_DECODER_ERROR_OTHER;
+        }
+        // The output buffer owns this reference until it is rendered, dropped or flushed.
+        // Preserve the actual planes, bit depth and color metadata without a full-frame copy.
+        env->SetLongField(output_buffer, jniContext->decoder_private_field,
+                          reinterpret_cast<jlong>(frame));
+        return VIDEO_DECODER_SUCCESS;
     }
 
+    // Media3's YUV output contract is always planar 8-bit 4:2:0, even for 10-bit/4:4:4 input.
+    const int yStride = ALIGN(frame->width, 32);
+    const int uvStride = ALIGN((frame->width + 1) / 2, 16);
+    const int colorspace = GetOutputColorspace(frame->colorspace);
+    const jboolean initialized = env->CallBooleanMethod(output_buffer,
+            jniContext->init_for_yuv_frame_method, frame->width, frame->height,
+            yStride, uvStride, colorspace);
+    if (env->ExceptionCheck() || !initialized) {
+        av_frame_free(&frame);
+        return VIDEO_DECODER_ERROR_OTHER;
+    }
     jobject data_object = env->GetObjectField(output_buffer, jniContext->data_field);
-    auto *data = reinterpret_cast<jbyte *>(env->GetDirectBufferAddress(data_object));
-    const int32_t uvHeight = (frame->height + 1) / 2;
-    const uint64_t yLength = frame->linesize[0] * frame->height;
-    const uint64_t uvLength = frame->linesize[1] * uvHeight;
-
-    // TODO: Support rotate YUV data
-
-    memcpy(data, frame->data[0], yLength);
-    memcpy(data + yLength, frame->data[1], uvLength);
-    memcpy(data + yLength + uvLength, frame->data[2], uvLength);
-
+    auto *data = static_cast<uint8_t *>(env->GetDirectBufferAddress(data_object));
+    const size_t yLength = static_cast<size_t>(yStride) * frame->height;
+    const size_t uvLength = static_cast<size_t>(uvStride) * ((frame->height + 1) / 2);
+    uint8_t *dest[] = {data, data + yLength, data + yLength + uvLength, nullptr};
+    int strides[] = {yStride, uvStride, uvStride, 0};
+    SwsContext *scaleContext = jniContext->yuvContext.Get(frame, AV_PIX_FMT_YUV420P);
+    result = scaleContext ? sws_scale(scaleContext, frame->data,
+            frame->linesize, 0, frame->height, dest, strides) : 0;
+    const bool success = result == frame->height;
     av_frame_free(&frame);
-
-    return result;
+    return success ? VIDEO_DECODER_SUCCESS : VIDEO_DECODER_ERROR_OTHER;
 }
