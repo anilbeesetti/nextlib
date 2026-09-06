@@ -127,9 +127,10 @@ struct ScaleContext {
 // Surface::disconnect clears its buffer slots. Unlocking afterwards releases the
 // CPU mapping, but queueBuffer rejects the removed slot instead of displaying it.
 // The public NDK has no unlock-without-post operation.
-static void DiscardLockedBuffer(ANativeWindow *window) {
-    native_window_api_disconnect(window, NATIVE_WINDOW_API_CPU);
+static int DiscardLockedBuffer(ANativeWindow *window) {
+    const int result = native_window_api_disconnect(window, NATIVE_WINDOW_API_CPU);
     ANativeWindow_unlockAndPost(window);
+    return result;
 }
 
 struct JniContext {
@@ -328,8 +329,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                         0, frame->height, dest, strides);
     }
     if (rows != frame->height) {
-        DiscardLockedBuffer(jniContext->native_window);
-        jniContext->connected_as_cpu = false;
+        jniContext->connected_as_cpu = DiscardLockedBuffer(jniContext->native_window) != 0;
         jniContext->ReleaseSurface(env);
         return VIDEO_DECODER_ERROR_OTHER;
     }
