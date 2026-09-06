@@ -2,7 +2,6 @@
 set -euo pipefail
 
 # Versions
-VPX_VERSION=1.13.0
 MBEDTLS_VERSION=3.4.1
 FFMPEG_VERSION=6.0
 
@@ -12,13 +11,12 @@ BUILD_DIR=$BASE_DIR/build
 OUTPUT_DIR=$BASE_DIR/output
 SOURCES_DIR=$BASE_DIR/sources
 FFMPEG_DIR=$SOURCES_DIR/ffmpeg-$FFMPEG_VERSION
-VPX_DIR=$SOURCES_DIR/libvpx-$VPX_VERSION
 MBEDTLS_DIR=$SOURCES_DIR/mbedtls-$MBEDTLS_VERSION
 
 # Configuration
 ANDROID_ABIS="x86 x86_64 armeabi-v7a arm64-v8a"
 ANDROID_PLATFORM=21
-ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo libvpx_vp8 libvpx_vp9"
+ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo vp8 vp9"
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || sysctl -n hw.physicalcpu 2>/dev/null || echo 4)
 
 # Gradle supplies these; standalone callers use the same pinned versions.
@@ -71,71 +69,6 @@ downloadSource() (
   tar -zxf "$staging/source.tar.gz" -C "$staging"
   mv "$staging/$(basename "$destination")" "$destination"
 )
-
-function buildLibVpx() {
-  pushd "$VPX_DIR"
-
-  for ABI in $ANDROID_ABIS; do
-    VPX_AS=${TOOLCHAIN_PREFIX}/bin/llvm-as
-    # Set up environment variables
-    case $ABI in
-    armeabi-v7a)
-      EXTRA_BUILD_FLAGS="--force-target=armv7-android-gcc --disable-neon"
-      TOOLCHAIN=armv7a-linux-androideabi21-
-      ;;
-    arm64-v8a)
-      EXTRA_BUILD_FLAGS="--force-target=armv8-android-gcc"
-      TOOLCHAIN=aarch64-linux-android21-
-      ;;
-    x86)
-      EXTRA_BUILD_FLAGS="--force-target=x86-android-gcc --disable-sse2 --disable-sse3 --disable-ssse3 --disable-sse4_1 --disable-avx --disable-avx2 --enable-pic"
-      VPX_AS=$X86_AS
-      TOOLCHAIN=i686-linux-android21-
-      ;;
-    x86_64)
-      EXTRA_BUILD_FLAGS="--force-target=x86_64-android-gcc --disable-sse2 --disable-sse3 --disable-ssse3 --disable-sse4_1 --disable-avx --disable-avx2 --enable-pic --disable-neon --disable-neon-asm"
-      VPX_AS=$X86_AS
-      TOOLCHAIN=x86_64-linux-android21-
-      ;;
-    *)
-      echo "Unsupported architecture: $ABI"
-      exit 1
-      ;;
-    esac
-
-    CC="${TOOLCHAIN_PREFIX}/bin/${TOOLCHAIN}clang"
-    CC="$CC" \
-      CXX="${CC}++" \
-      LD="$CC" \
-      AR=${TOOLCHAIN_PREFIX}/bin/llvm-ar \
-      AS=${VPX_AS} \
-      STRIP=${TOOLCHAIN_PREFIX}/bin/llvm-strip \
-      NM=${TOOLCHAIN_PREFIX}/bin/llvm-nm \
-      LDFLAGS="-Wl,-z,max-page-size=16384" \
-      ./configure \
-      --prefix="$BUILD_DIR/external/$ABI" \
-      --libc="${TOOLCHAIN_PREFIX}/sysroot" \
-      --enable-vp8 \
-      --enable-vp9 \
-      --enable-static \
-      --disable-shared \
-      --disable-examples \
-      --disable-docs \
-      --enable-realtime-only \
-      --enable-install-libs \
-      --enable-multithread \
-      --disable-webm-io \
-      --disable-libyuv \
-      --enable-better-hw-compatibility \
-      --disable-runtime-cpu-detect \
-      ${EXTRA_BUILD_FLAGS}
-
-    make clean
-    make -j$JOBS
-    make install
-  done
-  popd
-}
 
 function buildMbedTLS() {
     pushd "$MBEDTLS_DIR"
@@ -240,7 +173,6 @@ function buildFfmpeg() {
       --enable-demuxers \
       --enable-swresample \
       --enable-avformat \
-      --enable-libvpx \
       --enable-protocol=file,http,https,mmsh,mmst,pipe,rtmp,rtmps,rtmpt,rtmpts,rtp,tls \
       --enable-version3 \
       --enable-mbedtls \
@@ -271,12 +203,8 @@ function buildFfmpeg() {
 if [[ ! -d "$MBEDTLS_DIR" ]]; then
   downloadSource "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${MBEDTLS_VERSION}.tar.gz" "$MBEDTLS_DIR"
 fi
-if [[ ! -d "$VPX_DIR" ]]; then
-  downloadSource "https://github.com/webmproject/libvpx/archive/refs/tags/v${VPX_VERSION}.tar.gz" "$VPX_DIR"
-fi
 if [[ ! -d "$FFMPEG_DIR" ]]; then
   downloadSource "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$FFMPEG_DIR"
 fi
 buildMbedTLS
-buildLibVpx
 buildFfmpeg

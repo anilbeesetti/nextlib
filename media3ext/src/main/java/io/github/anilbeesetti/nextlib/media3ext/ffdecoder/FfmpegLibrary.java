@@ -122,8 +122,8 @@ public final class FfmpegLibrary {
       case MimeTypes.VIDEO_H265 -> "hevc";
       case MimeTypes.VIDEO_MPEG -> "mpegvideo";
       case MimeTypes.VIDEO_MPEG2 -> "mpeg2video";
-      case MimeTypes.VIDEO_VP8 -> "libvpx";
-      case MimeTypes.VIDEO_VP9 -> "libvpx-vp9";
+      case MimeTypes.VIDEO_VP8 -> "vp8";
+      case MimeTypes.VIDEO_VP9 -> "vp9";
       default -> null;
     };
   }

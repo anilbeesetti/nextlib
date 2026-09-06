@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     ffmpeg = root / 'ffmpeg'
     ffmpeg.mkdir()
     shutil.copy(Path(__file__).with_name('setup.sh'), ffmpeg)
-    for name in ('mbedtls-3.4.1', 'libvpx-1.13.0', 'ffmpeg-6.0'):
+    for name in ('mbedtls-3.4.1', 'ffmpeg-6.0'):
         (ffmpeg / 'sources' / name).mkdir(parents=True)
     # Partial previous builds must not suppress a retry.
     (ffmpeg / 'build').mkdir()

@@ -1,6 +1,5 @@
 package io.github.anilbeesetti.nextlib.media3ext.ffdecoder;
 
-import android.util.Log;
 import android.view.Surface;
 
 import androidx.annotation.Nullable;
@@ -25,13 +24,10 @@ import java.util.List;
 final class FfmpegVideoDecoder extends
         SimpleDecoder<DecoderInputBuffer, VideoDecoderOutputBuffer, FfmpegDecoderException> {
 
-    private static final String TAG = "FfmpegVideoDecoder";
-
     // LINT.IfChange
     private static final int VIDEO_DECODER_SUCCESS = 0;
     private static final int VIDEO_DECODER_ERROR_INVALID_DATA = -1;
     private static final int VIDEO_DECODER_ERROR_OTHER = -2;
-    private static final int VIDEO_DECODER_ERROR_READ_FRAME = -3;
     // LINT.ThenChange(../../../../../../../jni/ffmpeg_jni.cc)
 
     private final String codecName;
@@ -164,9 +160,6 @@ final class FfmpegVideoDecoder extends
         if (sendPacketResult == VIDEO_DECODER_ERROR_INVALID_DATA) {
             outputBuffer.shouldBeSkipped = true;
             return null;
-        } else if (sendPacketResult == VIDEO_DECODER_ERROR_READ_FRAME) {
-            // need read frame
-            Log.d(TAG, "VIDEO_DECODER_ERROR_READ_FRAME: " + "timeUs=" + inputBuffer.timeUs);
         } else if (sendPacketResult == VIDEO_DECODER_ERROR_OTHER) {
             return new FfmpegDecoderException("ffmpegDecode error: (see logcat)");
         }
