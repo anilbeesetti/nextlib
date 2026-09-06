@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Versions
+DAV1D_VERSION=1.5.4
 MBEDTLS_VERSION=3.4.1
 FFMPEG_VERSION=6.0
 
@@ -11,12 +12,13 @@ BUILD_DIR=$BASE_DIR/build
 OUTPUT_DIR=$BASE_DIR/output
 SOURCES_DIR=$BASE_DIR/sources
 FFMPEG_DIR=$SOURCES_DIR/ffmpeg-$FFMPEG_VERSION
+DAV1D_DIR=$SOURCES_DIR/dav1d-$DAV1D_VERSION
 MBEDTLS_DIR=$SOURCES_DIR/mbedtls-$MBEDTLS_VERSION
 
 # Configuration
 ANDROID_ABIS="x86 x86_64 armeabi-v7a arm64-v8a"
 ANDROID_PLATFORM=21
-ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo vp8 vp9"
+ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo vp8 vp9 libdav1d"
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || sysctl -n hw.physicalcpu 2>/dev/null || echo 4)
 
 # Gradle supplies these; standalone callers use the same pinned versions.
@@ -52,7 +54,7 @@ fi
   echo "Android NDK or CMake installation is incomplete." >&2
   exit 1
 }
-for tool in curl tar make pkg-config; do
+for tool in curl tar make pkg-config meson ninja nasm; do
   command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
 done
 
@@ -69,6 +71,46 @@ downloadSource() (
   tar -zxf "$staging/source.tar.gz" -C "$staging"
   mv "$staging/$(basename "$destination")" "$destination"
 )
+
+function buildDav1d() {
+  for ABI in $ANDROID_ABIS; do
+    case $ABI in
+      armeabi-v7a) DAV1D_CPU=arm; DAV1D_TOOLCHAIN=armv7a-linux-androideabi ;;
+      arm64-v8a) DAV1D_CPU=aarch64; DAV1D_TOOLCHAIN=aarch64-linux-android ;;
+      x86) DAV1D_CPU=x86; DAV1D_TOOLCHAIN=i686-linux-android ;;
+      x86_64) DAV1D_CPU=x86_64; DAV1D_TOOLCHAIN=x86_64-linux-android ;;
+    esac
+
+    DAV1D_BUILD_DIR="$BUILD_DIR/dav1d/$ABI"
+    mkdir -p "$BUILD_DIR/dav1d"
+    DAV1D_CROSS_FILE="$BUILD_DIR/dav1d/$ABI.meson"
+    cat > "$DAV1D_CROSS_FILE" <<EOF
+[binaries]
+c = '$TOOLCHAIN_PREFIX/bin/$DAV1D_TOOLCHAIN$ANDROID_PLATFORM-clang'
+ar = '$TOOLCHAIN_PREFIX/bin/llvm-ar'
+strip = '$TOOLCHAIN_PREFIX/bin/llvm-strip'
+
+[properties]
+needs_exe_wrapper = true
+
+[host_machine]
+system = 'android'
+cpu_family = '$DAV1D_CPU'
+cpu = '$DAV1D_CPU'
+endian = 'little'
+EOF
+
+    # Reconfigure even after an interrupted build or a toolchain/version change.
+    rm -rf "$DAV1D_BUILD_DIR"
+    meson setup "$DAV1D_BUILD_DIR" "$DAV1D_DIR" \
+      --cross-file="$DAV1D_CROSS_FILE" \
+      --prefix="$BUILD_DIR/external/$ABI" --libdir=lib \
+      --buildtype=release --default-library=static \
+      -Db_staticpic=true -Denable_tools=false -Denable_tests=false
+    ninja -C "$DAV1D_BUILD_DIR" -j"$JOBS"
+    ninja -C "$DAV1D_BUILD_DIR" install
+  done
+}
 
 function buildMbedTLS() {
     pushd "$MBEDTLS_DIR"
@@ -138,12 +180,12 @@ function buildFfmpeg() {
       ;;
     esac
 
-    # Referencing dependencies without pkgconfig
+    # Restrict pkg-config to target libraries, never the host's installed dav1d.
     DEP_CFLAGS="-I$BUILD_DIR/external/$ABI/include"
     DEP_LD_FLAGS="-L$BUILD_DIR/external/$ABI/lib"
 
     # Configure FFmpeg build
-    ./configure \
+    PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$BUILD_DIR/external/$ABI/lib/pkgconfig" ./configure \
       --prefix="$BUILD_DIR/$ABI" \
       --enable-cross-compile \
       --x86asmexe="$X86_AS" \
@@ -157,6 +199,7 @@ function buildFfmpeg() {
       --extra-cflags="-O3 -fPIC $DEP_CFLAGS" \
       --extra-ldflags="$DEP_LD_FLAGS -Wl,-z,max-page-size=16384" \
       --pkg-config="$(command -v pkg-config)" \
+      --pkg-config-flags=--static \
       --target-os=android \
       --enable-shared \
       --disable-static \
@@ -173,6 +216,7 @@ function buildFfmpeg() {
       --enable-demuxers \
       --enable-swresample \
       --enable-avformat \
+      --enable-libdav1d \
       --enable-protocol=file,http,https,mmsh,mmst,pipe,rtmp,rtmps,rtmpt,rtmpts,rtp,tls \
       --enable-version3 \
       --enable-mbedtls \
@@ -206,5 +250,9 @@ fi
 if [[ ! -d "$FFMPEG_DIR" ]]; then
   downloadSource "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$FFMPEG_DIR"
 fi
+if [[ ! -d "$DAV1D_DIR" ]]; then
+  downloadSource "https://github.com/videolan/dav1d/archive/refs/tags/${DAV1D_VERSION}.tar.gz" "$DAV1D_DIR"
+fi
 buildMbedTLS
+buildDav1d
 buildFfmpeg

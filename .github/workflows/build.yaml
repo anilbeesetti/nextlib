@@ -35,6 +35,9 @@ jobs:
           validate-wrappers: true
           gradle-home-cache-cleanup: true
 
+      - name: Install dav1d build tools
+        run: sudo apt-get update && sudo apt-get install -y meson ninja-build nasm
+
       - name: Check FFmpeg setup
         run: python3 ffmpeg/test_setup.py
 
