@@ -3,8 +3,8 @@ set -euo pipefail
 
 # Versions
 DAV1D_VERSION=1.5.4
-MBEDTLS_VERSION=3.4.1
-FFMPEG_VERSION=6.0
+MBEDTLS_VERSION=3.6.7
+FFMPEG_VERSION=9.0.1
 
 # Directories
 BASE_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -58,8 +58,6 @@ for tool in curl tar make pkg-config meson ninja nasm; do
   command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
 done
 
-X86_AS=$(command -v yasm || printf '%s\n' "${TOOLCHAIN_PREFIX}/bin/yasm")
-
 mkdir -p "$SOURCES_DIR"
 
 # Publish a source directory only after a complete download and extraction.
@@ -67,8 +65,8 @@ downloadSource() (
   destination=$2
   staging=$(mktemp -d "$SOURCES_DIR/.download.XXXXXX")
   trap 'rm -rf "$staging"' EXIT
-  curl --fail --location --retry 3 "$1" -o "$staging/source.tar.gz"
-  tar -zxf "$staging/source.tar.gz" -C "$staging"
+  curl --fail --location --retry 3 "$1" -o "$staging/source.tar"
+  tar -xf "$staging/source.tar" -C "$staging"
   mv "$staging/$(basename "$destination")" "$destination"
 )
 
@@ -127,7 +125,13 @@ function buildMbedTLS() {
        -DANDROID_ABI=$ABI \
        -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake" \
        -DCMAKE_INSTALL_PREFIX="$BUILD_DIR/external/$ABI" \
+       -DCMAKE_INSTALL_LIBDIR=lib \
+       -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
+       -DUSE_STATIC_MBEDTLS_LIBRARY=ON \
+       -DUSE_SHARED_MBEDTLS_LIBRARY=OFF \
+       -DENABLE_PROGRAMS=OFF \
        -DENABLE_TESTING=0
 
       make -j$JOBS
@@ -171,7 +175,7 @@ function buildFfmpeg() {
       ;;
     x86_64)
       TOOLCHAIN=x86_64-linux-android21-
-      CPU=x86_64
+      CPU=x86-64
       ARCH=x86_64
       ;;
     *)
@@ -188,7 +192,7 @@ function buildFfmpeg() {
     PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$BUILD_DIR/external/$ABI/lib/pkgconfig" ./configure \
       --prefix="$BUILD_DIR/$ABI" \
       --enable-cross-compile \
-      --x86asmexe="$X86_AS" \
+      --x86asmexe="$(command -v nasm)" \
       --arch=$ARCH \
       --cpu=$CPU \
       --cross-prefix="${TOOLCHAIN_PREFIX}/bin/$TOOLCHAIN" \
@@ -209,7 +213,6 @@ function buildFfmpeg() {
       --disable-vulkan \
       --disable-avdevice \
       --disable-avformat \
-      --disable-postproc \
       --disable-avfilter \
       --disable-symver \
       --enable-parsers \
@@ -245,7 +248,8 @@ function buildFfmpeg() {
 
 # Gradle owns up-to-date checks. Existing directories can be left by failed builds.
 if [[ ! -d "$MBEDTLS_DIR" ]]; then
-  downloadSource "https://github.com/Mbed-TLS/mbedtls/archive/refs/tags/v${MBEDTLS_VERSION}.tar.gz" "$MBEDTLS_DIR"
+  # GitHub's generated source archives omit required submodules/generated files.
+  downloadSource "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VERSION}/mbedtls-${MBEDTLS_VERSION}.tar.bz2" "$MBEDTLS_DIR"
 fi
 if [[ ! -d "$FFMPEG_DIR" ]]; then
   downloadSource "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.gz" "$FFMPEG_DIR"
@@ -253,6 +257,7 @@ fi
 if [[ ! -d "$DAV1D_DIR" ]]; then
   downloadSource "https://github.com/videolan/dav1d/archive/refs/tags/${DAV1D_VERSION}.tar.gz" "$DAV1D_DIR"
 fi
+
 buildMbedTLS
 buildDav1d
 buildFfmpeg

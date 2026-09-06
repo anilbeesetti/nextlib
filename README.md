@@ -69,9 +69,8 @@ application-owned error handling.
 
 Use macOS or Linux (WSL on Windows), JDK 17+, `make`, `curl`, `tar`, and
 `pkg-config`, Meson, Ninja, and NASM 2.14+ (`brew install meson ninja nasm` on
-macOS; `sudo apt-get install meson ninja-build nasm` on Ubuntu). On Apple Silicon,
-also install native `yasm` (`brew install yasm`)
-for the x86 ABIs; the pinned NDK bundles an Intel-only assembler. Install [Android CLI](https://developer.android.com/tools/agents/android-cli/download)
+macOS; `sudo apt-get install meson ninja-build nasm` on Ubuntu). NASM is used for
+both FFmpeg and dav1d's x86 assembly. Install [Android CLI](https://developer.android.com/tools/agents/android-cli/download)
 and put `android` on PATH, or set `ANDROID_CLI` to its executable path.
 Set `sdk.dir` in `local.properties` or export `ANDROID_HOME` to your Android SDK.
 
@@ -85,7 +84,9 @@ NDK and CMake versions come from `gradle/libs.versions.toml`. Existing SDK tools
 are reused; Android CLI is only needed when a package is missing. Complete any
 SDK license prompts during initial installation before running a headless build.
 
-The build pins dav1d 1.5.4 and statically links it into FFmpeg's `libavcodec.so`
+The build pins FFmpeg 9.0.1, mbedTLS 3.6.7 (the 3.6 LTS branch), and dav1d 1.5.4.
+mbedTLS is built from its complete release archive and linked statically for
+HTTPS/TLS support. The build statically links dav1d into FFmpeg's `libavcodec.so`
 for every ABI, with assembly optimizations and both 8-bit and high-bit-depth AV1
 support. AV1 uses the `libdav1d` decoder in Media3 and in media-info/thumbnail lookups.
 
