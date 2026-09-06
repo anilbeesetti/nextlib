@@ -40,6 +40,9 @@ jobs:
           validate-wrappers: true
           cache-cleanup: always
 
+      - name: Install dav1d build tools
+        run: sudo apt-get update && sudo apt-get install -y meson ninja-build nasm
+
       - name: Publish to Sonatype Repository
         run: ./gradlew publishToMavenCentral --no-configuration-cache
         env:

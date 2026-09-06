@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     ffmpeg = root / 'ffmpeg'
     ffmpeg.mkdir()
     shutil.copy(Path(__file__).with_name('setup.sh'), ffmpeg)
-    for name in ('mbedtls-3.4.1', 'libvpx-1.13.0', 'ffmpeg-6.0'):
+    for name in ('mbedtls-3.4.1', 'libvpx-1.13.0', 'ffmpeg-6.0', 'dav1d-1.5.4'):
         (ffmpeg / 'sources' / name).mkdir(parents=True)
     # Partial previous builds must not suppress a retry.
     (ffmpeg / 'build').mkdir()
@@ -31,6 +31,8 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     log = root / 'cli.log'
     executable(cli, 'printf "%s\\n" "$@" > "$CLI_LOG"\nexit 19\n')
     executable(root / 'bin/pkg-config', 'exit 0\n')
+    for tool in ('meson', 'ninja', 'nasm'):
+        executable(root / 'bin' / tool, 'exit 0\n')
     env = dict(os.environ, PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'], ANDROID_HOME=str(sdk), ANDROID_CLI=str(cli),
                ANDROID_NDK_VERSION='test-ndk', ANDROID_CMAKE_VERSION='test-cmake',
                CLI_LOG=str(log))
@@ -72,6 +74,45 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     result = run()
     assert result.returncode == 42 and source.is_dir(), result
     assert not list((ffmpeg / 'sources').glob('.download.*'))
+
+    # Exercise dav1d's cross-build and FFmpeg's target-only dependency discovery.
+    executable(cmake, 'exit 0\n')
+    executable(root / 'bin/make', 'exit 0\n')
+    executable(ffmpeg / 'sources/libvpx-1.13.0/configure', 'exit 0\n')
+    executable(root / 'bin/meson', '''
+printf '%s\\n' "$@" > "$2.args"
+''')
+    executable(ffmpeg / 'sources/ffmpeg-6.0/configure', '''
+prefix=${1#--prefix=}
+mkdir -p "$prefix/lib" "$prefix/include"
+touch "$prefix/lib/libavcodec.so" "$prefix/include/avcodec.h"
+printf '%s\\n' "$@" > "$prefix/configure.args"
+printf '%s\\n' "$PKG_CONFIG_PATH" "$PKG_CONFIG_LIBDIR" > "$prefix/pkgconfig.env"
+''')
+    env['PKG_CONFIG_PATH'] = '/host/libraries/must/not/be/used'
+    result = run()
+    assert result.returncode == 0, result
+    for abi, toolchain, cpu in (
+        ('x86', 'i686-linux-android', 'x86'),
+        ('x86_64', 'x86_64-linux-android', 'x86_64'),
+        ('armeabi-v7a', 'armv7a-linux-androideabi', 'arm'),
+        ('arm64-v8a', 'aarch64-linux-android', 'aarch64'),
+    ):
+        cross = (ffmpeg / f'build/dav1d/{abi}.meson').read_text()
+        assert f'{toolchain}21-clang' in cross and f"cpu_family = '{cpu}'" in cross
+        assert 'needs_exe_wrapper = true' in cross
+        args = (ffmpeg / f'build/dav1d/{abi}.args').read_text().splitlines()
+        for option in ('--default-library=static', '-Db_staticpic=true',
+                       '-Denable_tools=false', '-Denable_tests=false', '--libdir=lib'):
+            assert option in args, (abi, option)
+        args = (ffmpeg / f'build/{abi}/configure.args').read_text().splitlines()
+        for option in ('--enable-libdav1d', '--enable-decoder=libdav1d', '--pkg-config-flags=--static'):
+            assert option in args, (abi, option)
+        assert (ffmpeg / f'build/{abi}/pkgconfig.env').read_text().splitlines() == [
+            '', str(ffmpeg / f'build/external/{abi}/lib/pkgconfig')]
+    executable(root / 'bin/ninja', 'exit 43\n')
+    assert run().returncode == 43, 'dav1d build failures must stop the build'
+
     cmake.unlink()
     env['ANDROID_CLI'] = str(root / 'missing-cli')
     result = run()
