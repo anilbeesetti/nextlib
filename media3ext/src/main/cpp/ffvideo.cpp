@@ -7,6 +7,7 @@
 #include <array>
 #include <climits>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include "ffcommon.h"
 
@@ -68,7 +69,6 @@ static int native_window_api_disconnect(ANativeWindow *window, int api) {
 static const int VIDEO_DECODER_SUCCESS = 0;
 static const int VIDEO_DECODER_ERROR_INVALID_DATA = -1;
 static const int VIDEO_DECODER_ERROR_OTHER = -2;
-static const int VIDEO_DECODER_ERROR_READ_FRAME = -3;
 
 
 // Media3 C.VIDEO_OUTPUT_MODE_SURFACE_YUV.
@@ -135,7 +135,55 @@ static int DiscardLockedBuffer(ANativeWindow *window) {
 
 struct JniContext {
     ~JniContext() {
+        ClearPendingFrames();
         releaseContext(codecContext);
+    }
+
+    void ClearPendingFrames() {
+        for (AVFrame *frame : pendingFrames) av_frame_free(&frame);
+        pendingFrames.clear();
+    }
+
+    // Returns VIDEO_DECODER_* statuses, keeping receive errors distinct from bad input.
+    int SendPacket(const AVPacket *packet) {
+        int result;
+        while ((result = avcodec_send_packet(codecContext, packet)) == AVERROR(EAGAIN)) {
+            // FFmpeg has not accepted this packet. Preserve queued output and retry
+            // the same input; dropping it corrupts VP9 reference frames.
+            AVFrame *frame = av_frame_alloc();
+            if (!frame) {
+                logError("av_frame_alloc", AVERROR(ENOMEM));
+                return VIDEO_DECODER_ERROR_OTHER;
+            }
+            result = avcodec_receive_frame(codecContext, frame);
+            if (result < 0) {
+                av_frame_free(&frame);
+                // FFmpeg 6's VP9 filter can consume hidden alt-ref frames without
+                // yielding output. Input may now be accepted, so retry it.
+                if (result == AVERROR(EAGAIN)) continue;
+                logError("avcodec_receive_frame", result);
+                // Match ffmpegReceiveFrame: a receive failure is fatal, never a
+                // reason to skip the current packet, which is still unaccepted.
+                return VIDEO_DECODER_ERROR_OTHER;
+            }
+            pendingFrames.push_back(frame);
+        }
+        if (result < 0) {
+            logError("avcodec_send_packet", result);
+            return result == AVERROR_INVALIDDATA ? VIDEO_DECODER_ERROR_INVALID_DATA
+                                                 : VIDEO_DECODER_ERROR_OTHER;
+        }
+        return VIDEO_DECODER_SUCCESS;
+    }
+
+    int ReceiveFrame(AVFrame **frame) {
+        if (!pendingFrames.empty()) {
+            *frame = pendingFrames.front();
+            pendingFrames.pop_front();
+            return 0;
+        }
+        *frame = av_frame_alloc();
+        return *frame ? avcodec_receive_frame(codecContext, *frame) : AVERROR(ENOMEM);
     }
 
     void ReleaseSurface(JNIEnv *env) {
@@ -173,6 +221,7 @@ struct JniContext {
     jmethodID init_method{};
 
     AVCodecContext *codecContext{};
+    std::deque<AVFrame *> pendingFrames;
     // Decoding and rendering run on different threads.
     ScaleContext renderContext;
     ScaleContext yuvContext;
@@ -212,7 +261,7 @@ JniContext *createVideoContext(JNIEnv *env,
     codecContext->thread_count = threads;
     if (codec->id == AV_CODEC_ID_AV1) {
         // SimpleDecoder expects a frame per sample and does not drain at EOS.
-        // Disable dav1d's frame delay to avoid EAGAIN and skipped input packets.
+        // Disable dav1d's frame delay so each sample yields its output promptly.
         codecContext->flags |= AV_CODEC_FLAG_LOW_DELAY;
     }
     codecContext->err_recognition = AV_EF_IGNORE_ERR;
@@ -262,6 +311,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         return 0L;
     }
 
+    jniContext->ClearPendingFrames();
     avcodec_flush_buffers(context);
     return (jlong) jniContext;
 }
@@ -351,7 +401,6 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                  jint length,
                                                                                  jlong input_time) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
-    AVCodecContext *avContext = jniContext->codecContext;
 
     auto *inputBuffer = (uint8_t *) env->GetDirectBufferAddress(encoded_data);
     if (!inputBuffer || length < 0 ||
@@ -367,20 +416,8 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     packet.pts = input_time;
 
     // Queue input data.
-    int result = avcodec_send_packet(avContext, &packet);
+    int result = jniContext->SendPacket(&packet);
     av_packet_unref(&packet);
-    if (result) {
-        logError("avcodec_send_packet", result);
-        if (result == AVERROR_INVALIDDATA) {
-            // need more data
-            return VIDEO_DECODER_ERROR_INVALID_DATA;
-        } else if (result == AVERROR(EAGAIN)) {
-            // need read frame
-            return VIDEO_DECODER_ERROR_READ_FRAME;
-        } else {
-            return VIDEO_DECODER_ERROR_OTHER;
-        }
-    }
     return result;
 }
 
@@ -393,14 +430,9 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                    jobject output_buffer,
                                                                                    jboolean decode_only) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
-    AVCodecContext *avContext = jniContext->codecContext;
 
-    AVFrame *frame = av_frame_alloc();
-    if (!frame) {
-        LOGE("Failed to allocate output frame.");
-        return VIDEO_DECODER_ERROR_OTHER;
-    }
-    int result = avcodec_receive_frame(avContext, frame);
+    AVFrame *frame = nullptr;
+    int result = jniContext->ReceiveFrame(&frame);
 
     // fail
     if (decode_only || result == AVERROR(EAGAIN)) {

@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     ffmpeg = root / 'ffmpeg'
     ffmpeg.mkdir()
     shutil.copy(Path(__file__).with_name('setup.sh'), ffmpeg)
-    for name in ('mbedtls-3.4.1', 'libvpx-1.13.0', 'ffmpeg-6.0', 'dav1d-1.5.4'):
+    for name in ('mbedtls-3.4.1', 'ffmpeg-6.0', 'dav1d-1.5.4'):
         (ffmpeg / 'sources' / name).mkdir(parents=True)
     # Partial previous builds must not suppress a retry.
     (ffmpeg / 'build').mkdir()
@@ -78,7 +78,6 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     # Exercise dav1d's cross-build and FFmpeg's target-only dependency discovery.
     executable(cmake, 'exit 0\n')
     executable(root / 'bin/make', 'exit 0\n')
-    executable(ffmpeg / 'sources/libvpx-1.13.0/configure', 'exit 0\n')
     executable(root / 'bin/meson', '''
 printf '%s\\n' "$@" > "$2.args"
 ''')
@@ -106,8 +105,10 @@ printf '%s\\n' "$PKG_CONFIG_PATH" "$PKG_CONFIG_LIBDIR" > "$prefix/pkgconfig.env"
                        '-Denable_tools=false', '-Denable_tests=false', '--libdir=lib'):
             assert option in args, (abi, option)
         args = (ffmpeg / f'build/{abi}/configure.args').read_text().splitlines()
-        for option in ('--enable-libdav1d', '--enable-decoder=libdav1d', '--pkg-config-flags=--static'):
+        for option in ('--enable-libdav1d', '--enable-decoder=libdav1d', '--enable-decoder=vp8',
+                       '--enable-decoder=vp9', '--pkg-config-flags=--static'):
             assert option in args, (abi, option)
+        assert '--enable-libvpx' not in args
         assert (ffmpeg / f'build/{abi}/pkgconfig.env').read_text().splitlines() == [
             '', str(ffmpeg / f'build/external/{abi}/lib/pkgconfig')]
     executable(root / 'bin/ninja', 'exit 43\n')
