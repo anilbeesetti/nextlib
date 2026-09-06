@@ -1,6 +1,9 @@
 # dav1d AV1 verification — 2026-09-06
 
-Tested Nextlib `ceabc33` on `codex/dav1d` against Next Player `5b5747c7` using
+Latest retest: Nextlib `7ed6908` after merging `main` (`01af998`); see
+[main merge retest](#main-merge-retest).
+
+Initial verification tested Nextlib `ceabc33` on `codex/dav1d` against Next Player `5b5747c7` using
 Next Player's `nextlibPath` composite-build override. Next Player required no
 source or published dependency changes.
 
@@ -81,3 +84,38 @@ Fixtures: 40-second MP4s, 640×360 at 24 fps, AV1 Main profile, 8-bit and 10-bit
 
 Runtime coverage is ARM64 on this emulator. Other ABIs were built and inspected;
 physical-device performance, HDR output, and 12-bit media were not tested.
+
+
+## Main merge retest
+
+Merged `main` at `01af998` into `codex/dav1d` as `7ed6908`. The build keeps
+main's built-in VP8/VP9 decoders and adds dav1d alongside them. The AV1 native
+regression now uses the production `JniContext::SendPacket`, `ReceiveFrame`,
+and JNI reset methods introduced by main, including its packet retry handling.
+
+The following passed again against Next Player `5b5747c7`:
+
+- Setup regression, Nextlib `assembleDebug assembleRelease test` (11 JVM tests),
+  and Next Player `assembleDebug test ktlintCheck`. A separate Next Player
+  `test` run set `Test.outputs.upToDateWhen { false }` and
+  `Test.ignoreFailures = false` through the init script, forcing execution:
+  158 tests, zero failures, errors, or skips.
+- Both native scripts: AV1 8-bit/10-bit produced all 48 frames before and after
+  seek/reset, with no frames left at EOS. VP9 packet retry, hidden alt-ref
+  frames, pending-output reset, error classification, decoder discovery,
+  color conversion, and invalid surface buffer regressions all passed.
+- All four ABI APKs contain the merged `libavcodec.so` byte-for-byte, with
+  built-in VP8/VP9, static dav1d, and at least 16 KB ELF LOAD alignment. The
+  ARM64 JNI library build ID matches the worktree build.
+
+On a fresh disposable emulator with the same Android 17 / API 37 ARM64,
+16 KB-page configuration described above, both AV1 clips played through
+`ffmpegLavc60.3.100-libdav1d` and sought to 9,518 ms and 32,464 ms respectively.
+Switching the 8-bit clip back to Android software decoding preserved its paused
+position exactly. A 40-second loop of the committed VP9 alt-ref fixture, muxed
+with AAC, played through `ffmpegLavc60.3.100-vp9` and sought to 24,107 ms.
+Playback and seek screenshots were visually inspected. The app log contained
+no packet send/receive or playback errors; the crash buffer was empty.
+
+The merged ARM64 Next Player debug APK was also installed successfully on the
+connected CPH2689. Playback validation above was performed on the emulator.
