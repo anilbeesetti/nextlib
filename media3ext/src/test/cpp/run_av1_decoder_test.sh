@@ -13,7 +13,9 @@ fi
 "$compiler" --target=aarch64-linux-android23 -std=c++17 -O2 -static-libstdc++ \
     -Wl,-z,max-page-size=16384 -I"$repo/ffmpeg/output/include/arm64-v8a" \
     "$repo/media3ext/src/test/cpp/av1_decoder_test.cpp" \
-    -L"$repo/ffmpeg/output/lib/arm64-v8a" -lavformat -lavcodec -lavutil \
+    "$repo/media3ext/src/main/cpp/ffcommon.cpp" \
+    -L"$repo/ffmpeg/output/lib/arm64-v8a" -lavformat -lavcodec -lavutil -lswscale -lswresample \
+    -landroid -llog \
     -o "$build/av1_decoder_test"
 device_dir=/data/local/tmp/nextlib-av1-test
 adb shell mkdir -p "$device_dir"

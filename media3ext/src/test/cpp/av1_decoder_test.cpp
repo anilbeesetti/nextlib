@@ -1,4 +1,5 @@
-// Decode a real AV1 file twice to cover decoder discovery, draining and seek/flush.
+// Exercise production initialization and SimpleDecoder's one-input/one-output contract.
+#include "../../main/cpp/ffvideo.cpp"
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -21,20 +22,29 @@ int main(int argc, char **argv) {
     assert(avformat_find_stream_info(input, nullptr) >= 0);
     int stream = av_find_best_stream(input, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
     assert(stream >= 0);
-    AVCodecContext *context = avcodec_alloc_context3(codec);
-    assert(context);
-    assert(avcodec_parameters_to_context(context, input->streams[stream]->codecpar) == 0);
-    context->thread_count = 4;
-    assert(avcodec_open2(context, codec, nullptr) == 0);
+    // Only JNI metadata lookup is stubbed; FFmpeg and dav1d run normally.
+    JNINativeInterface functions{};
+    functions.FindClass = [](JNIEnv *, const char *) { return reinterpret_cast<jclass>(1); };
+    functions.GetFieldID = [](JNIEnv *, jclass, const char *, const char *) { return reinterpret_cast<jfieldID>(1); };
+    functions.GetMethodID = [](JNIEnv *, jclass, const char *, const char *) { return reinterpret_cast<jmethodID>(1); };
+    functions.ExceptionCheck = [](JNIEnv *) -> jboolean { return false; };
+    JNIEnv env{&functions};
+    std::unique_ptr<JniContext> jniContext(createVideoContext(&env, const_cast<AVCodec *>(codec), nullptr, 4));
+    assert(jniContext);
+    AVCodecContext *context = jniContext->codecContext;
     AVPacket *packet = av_packet_alloc();
     AVFrame *frame = av_frame_alloc();
     assert(packet && frame);
 
     for (int pass = 0; pass < 2; pass++) {
         int frames = 0;
-        auto receive = [&]() {
-            int result;
-            while ((result = avcodec_receive_frame(context, frame)) == 0) {
+        int result;
+        while ((result = av_read_frame(input, packet)) >= 0) {
+            if (packet->stream_index == stream) {
+                assert(avcodec_send_packet(context, packet) == 0);
+                // SimpleDecoder receives once per sample and does not drain at EOS.
+                // Default dav1d frame delay used to cause EAGAIN and lost packets here.
+                assert(avcodec_receive_frame(context, frame) == 0);
                 assert(frame->width == 640 && frame->height == 360);
                 const AVPixFmtDescriptor *format = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(frame->format));
                 assert(format && format->comp[0].depth == depth);
@@ -42,20 +52,11 @@ int main(int argc, char **argv) {
                 frames++;
                 av_frame_unref(frame);
             }
-            assert(result == AVERROR(EAGAIN) || result == AVERROR_EOF);
-            return result;
-        };
-        int result;
-        while ((result = av_read_frame(input, packet)) >= 0) {
-            if (packet->stream_index == stream) {
-                assert(avcodec_send_packet(context, packet) == 0);
-                receive();
-            }
             av_packet_unref(packet);
         }
         assert(result == AVERROR_EOF);
         assert(avcodec_send_packet(context, nullptr) == 0);
-        assert(receive() == AVERROR_EOF);
+        assert(avcodec_receive_frame(context, frame) == AVERROR_EOF);
         assert(frames == expectedFrames);
         printf("PASS: libdav1d %d-bit, %d frames, %s\n", depth, frames, pass ? "after seek/flush" : "initial decode");
         if (pass == 0) {
@@ -65,6 +66,5 @@ int main(int argc, char **argv) {
     }
     av_frame_free(&frame);
     av_packet_free(&packet);
-    avcodec_free_context(&context);
     avformat_close_input(&input);
 }

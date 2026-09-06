@@ -110,4 +110,6 @@ ANDROID_NDK_HOME=/path/to/sdk/ndk/25.2.9519653 ANDROID_SERIAL=emulator-5554 \
 ```
 
 This checks decoder discovery by both name and codec ID, 8-bit and 10-bit output,
-film-grain decoding, end-of-stream draining, and decoding again after a seek/flush.
+film-grain decoding, one output frame per sample with no delayed frames at EOS,
+and decoding again after a seek/flush. AV1 uses dav1d's low-delay mode to match
+Media3's `SimpleDecoder` input/output contract.

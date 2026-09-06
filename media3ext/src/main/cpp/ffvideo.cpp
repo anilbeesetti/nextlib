@@ -210,6 +210,11 @@ JniContext *createVideoContext(JNIEnv *env,
     }
 
     codecContext->thread_count = threads;
+    if (codec->id == AV_CODEC_ID_AV1) {
+        // SimpleDecoder expects a frame per sample and does not drain at EOS.
+        // Disable dav1d's frame delay to avoid EAGAIN and skipped input packets.
+        codecContext->flags |= AV_CODEC_FLAG_LOW_DELAY;
+    }
     codecContext->err_recognition = AV_EF_IGNORE_ERR;
     int result = avcodec_open2(codecContext, codec, nullptr);
     if (result < 0) {
