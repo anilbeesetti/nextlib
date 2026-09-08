@@ -44,7 +44,7 @@ jobs:
       - name: Build Project with gradle
         run: ./gradlew assembleRelease
 
-      - uses: actions/upload-artifact@v6.0.0
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: nextlib-release
           if-no-files-found: error
