@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     ffmpeg = root / 'ffmpeg'
     ffmpeg.mkdir()
     shutil.copy(Path(__file__).with_name('setup.sh'), ffmpeg)
-    for name in ('mbedtls-3.4.1', 'ffmpeg-6.0', 'dav1d-1.5.4'):
+    for name in ('mbedtls-3.6.7', 'ffmpeg-9.0.1', 'dav1d-1.5.4'):
         (ffmpeg / 'sources' / name).mkdir(parents=True)
     # Partial previous builds must not suppress a retry.
     (ffmpeg / 'build').mkdir()
@@ -57,22 +57,23 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     result = run()
     assert result.returncode == 42 and 'native-build-reached' in result.stderr, result
     assert not log.exists()
-    source = ffmpeg / 'sources/mbedtls-3.4.1'
+    source = ffmpeg / 'sources/mbedtls-3.6.7'
     shutil.rmtree(source)
     executable(root / 'bin/curl', 'exit 22\n')
     result = run()
     assert result.returncode == 22 and not source.exists()
     assert not list((ffmpeg / 'sources').glob('.download.*'))
-    archive = root / 'source.tar.gz'
-    with tarfile.open(archive, 'w:gz') as tar:
-        directory = tarfile.TarInfo('mbedtls-3.4.1')
+    archive = root / 'source.tar.bz2'
+    with tarfile.open(archive, 'w:bz2') as tar:
+        directory = tarfile.TarInfo('mbedtls-3.6.7')
         directory.type = tarfile.DIRTYPE
         directory.mode = 0o755
         tar.addfile(directory)
     env['SOURCE_ARCHIVE'] = str(archive)
-    executable(root / 'bin/curl', 'cp "$SOURCE_ARCHIVE" "${@: -1}"\n')
+    executable(root / 'bin/curl', 'printf "%s\\n" "$@" > "$CLI_LOG"\ncp "$SOURCE_ARCHIVE" "${@: -1}"\n')
     result = run()
     assert result.returncode == 42 and source.is_dir(), result
+    assert 'https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2' in log.read_text().splitlines()
     assert not list((ffmpeg / 'sources').glob('.download.*'))
 
     # Exercise dav1d's cross-build and FFmpeg's target-only dependency discovery.
@@ -81,7 +82,7 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     executable(root / 'bin/meson', '''
 printf '%s\\n' "$@" > "$2.args"
 ''')
-    executable(ffmpeg / 'sources/ffmpeg-6.0/configure', '''
+    executable(ffmpeg / 'sources/ffmpeg-9.0.1/configure', '''
 prefix=${1#--prefix=}
 mkdir -p "$prefix/lib" "$prefix/include"
 touch "$prefix/lib/libavcodec.so" "$prefix/include/avcodec.h"
@@ -109,6 +110,10 @@ printf '%s\\n' "$PKG_CONFIG_PATH" "$PKG_CONFIG_LIBDIR" > "$prefix/pkgconfig.env"
                        '--enable-decoder=vp9', '--pkg-config-flags=--static'):
             assert option in args, (abi, option)
         assert '--enable-libvpx' not in args
+        assert f'--x86asmexe={root / "bin/nasm"}' in args
+        assert '--disable-postproc' not in args
+        if abi == 'x86_64':
+            assert '--cpu=x86-64' in args
         assert (ffmpeg / f'build/{abi}/pkgconfig.env').read_text().splitlines() == [
             '', str(ffmpeg / f'build/external/{abi}/lib/pkgconfig')]
     executable(root / 'bin/ninja', 'exit 43\n')
