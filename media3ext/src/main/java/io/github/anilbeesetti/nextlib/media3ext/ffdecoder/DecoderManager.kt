@@ -2,9 +2,11 @@ package io.github.anilbeesetti.nextlib.media3ext.ffdecoder
 
 import android.os.Looper
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DecoderCounters
+import androidx.media3.exoplayer.DecoderReuseEvaluation
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -58,6 +60,27 @@ class DecoderManager(
             initializationDurationMs: Long,
         ) {
             activeAudioMode = controller.activeMode(decoderName)
+        }
+
+        // Disabling a renderer can flush its codec. Reuse does not emit decoderInitialized again.
+        override fun onVideoInputFormatChanged(
+            eventTime: AnalyticsListener.EventTime,
+            format: Format,
+            decoderReuseEvaluation: DecoderReuseEvaluation?,
+        ) {
+            if (decoderReuseEvaluation != null && decoderReuseEvaluation.result != DecoderReuseEvaluation.REUSE_RESULT_NO) {
+                activeVideoMode = controller.activeMode(decoderReuseEvaluation.decoderName)
+            }
+        }
+
+        override fun onAudioInputFormatChanged(
+            eventTime: AnalyticsListener.EventTime,
+            format: Format,
+            decoderReuseEvaluation: DecoderReuseEvaluation?,
+        ) {
+            if (decoderReuseEvaluation != null && decoderReuseEvaluation.result != DecoderReuseEvaluation.REUSE_RESULT_NO) {
+                activeAudioMode = controller.activeMode(decoderReuseEvaluation.decoderName)
+            }
         }
 
         override fun onVideoDisabled(
