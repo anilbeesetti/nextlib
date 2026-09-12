@@ -313,14 +313,14 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegAudioDecoder_ffmpe
     if (codecId == AV_CODEC_ID_TRUEHD) {
         // Release and recreate the context if the codec is TrueHD.
         // TODO: Figure out why flushing doesn't work for this codec.
+        auto outputFloat =
+                (jboolean) (context->request_sample_fmt == OUTPUT_FORMAT_PCM_FLOAT);
         releaseContext(context);
         auto *codec = const_cast<AVCodec *>(avcodec_find_decoder(codecId));
         if (!codec) {
             LOGE("Unexpected error finding codec %d.", codecId);
             return 0L;
         }
-        auto outputFloat =
-                (jboolean) (context->request_sample_fmt == OUTPUT_FORMAT_PCM_FLOAT);
         return (jlong) createContext(env, codec, extra_data, outputFloat,
                 /* rawSampleRate= */ -1,
                 /* rawChannelCount= */ -1);
