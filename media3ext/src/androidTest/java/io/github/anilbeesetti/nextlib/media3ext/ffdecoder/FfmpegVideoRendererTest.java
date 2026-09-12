@@ -20,6 +20,7 @@ import androidx.media3.exoplayer.video.DecoderVideoRenderer;
 import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.DataInputStream;
 import java.lang.reflect.Method;
+import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
 
@@ -65,7 +66,7 @@ public class FfmpegVideoRendererTest {
         Method reuse = DecoderVideoRenderer.class.getDeclaredMethod(
                 "canReuseDecoder", String.class, Format.class, Format.class);
         reuse.setAccessible(true);
-        for (Format next : new Format[] {VP9, VP9.buildUpon().setWidth(128).setHeight(96).build(),
+        for (Format next : new Format[] {VP9, VP9.buildUpon().setRotationDegrees(90).build(), VP9.buildUpon().setWidth(128).setHeight(96).build(),
                 VP9.buildUpon().setSampleMimeType(MimeTypes.VIDEO_H264).build()}) {
             DecoderReuseEvaluation result = (DecoderReuseEvaluation) reuse.invoke(
                     renderer, "ffmpeg-vp9", VP9, next);
@@ -152,11 +153,137 @@ public class FfmpegVideoRendererTest {
         }
     }
 
+    @Test
+    public void rotationReachesSurfaceAndYuvPixelsAcrossFlushAndSurfaceRecreation() throws Exception {
+        FfmpegVideoRenderer baselineRenderer = renderer();
+        FfmpegVideoDecoder baseline = (FfmpegVideoDecoder) baselineRenderer.createDecoder(VP9, null);
+        byte[][] yuv;
+        byte[] rgba;
+        try {
+            baseline.setOutputMode(C.VIDEO_OUTPUT_MODE_YUV);
+            VideoDecoderOutputBuffer output = decodeKeyFrame(baseline);
+            yuv = yuvPixels(output);
+            output.release();
+            baseline.flush();
+            baseline.setOutputMode(C.VIDEO_OUTPUT_MODE_SURFACE_YUV);
+            rgba = surfacePixels(baselineRenderer, decodeKeyFrame(baseline));
+        } finally {
+            baseline.release();
+        }
+        // Explicit expectations also cover negative/overflow-prone values and the no-rotation fallback.
+        int[][] cases = {{0, 0}, {90, 90}, {180, 180}, {270, 270}, {-90, 270},
+                {-180, 180}, {-270, 90}, {450, 90}, {360, 0}, {-360, 0},
+                {45, 0}, {-45, 0}, {Integer.MIN_VALUE, 0}, {Integer.MAX_VALUE, 0},
+                {2147483610, 90}, {-2147483610, 270}};
+        for (int[] rotation : cases) {
+            Format format = VP9.buildUpon().setRotationDegrees(rotation[0])
+                    .setPixelWidthHeightRatio(1.25f).build();
+            FfmpegVideoRenderer renderer = renderer();
+            FfmpegVideoDecoder decoder = (FfmpegVideoDecoder) renderer.createDecoder(format, null);
+            boolean quarter = rotation[1] == 90 || rotation[1] == 270;
+            try {
+                for (int pass = 0; pass < 4; pass++) {
+                    decoder.flush();
+                    boolean surface = pass % 2 == 1;
+                    decoder.setOutputMode(surface ? C.VIDEO_OUTPUT_MODE_SURFACE_YUV : C.VIDEO_OUTPUT_MODE_YUV);
+                    long timeUs = 123000L * (pass + 1);
+                    VideoDecoderOutputBuffer output = decodeKeyFrame(decoder, format, timeUs);
+                    assertEquals(timeUs, output.timeUs);
+                    assertSame(format, output.format);
+                    assertEquals(1.25f, output.format.pixelWidthHeightRatio, 0);
+                    assertEquals(quarter ? 48 : 64, output.width);
+                    assertEquals(quarter ? 64 : 48, output.height);
+                    if (surface) {
+                        assertNotEquals(0, output.decoderPrivate);
+                        assertArrayEquals("Surface rotation " + rotation[0],
+                                rotate(rgba, 64, 48, 4, rotation[1]), surfacePixels(renderer, output));
+                    } else {
+                        assertEquals(0, output.decoderPrivate);
+                        byte[][] actual = yuvPixels(output);
+                        for (int plane = 0; plane < 3; plane++) {
+                            assertArrayEquals("YUV rotation " + rotation[0] + " plane " + plane,
+                                    rotate(yuv[plane], plane == 0 ? 64 : 32,
+                                            plane == 0 ? 48 : 24, 1, rotation[1]), actual[plane]);
+                        }
+                        output.release();
+                    }
+                    assertEquals(0, output.decoderPrivate);
+                }
+            } finally {
+                decoder.release();
+            }
+        }
+    }
+
+    private static byte[][] yuvPixels(VideoDecoderOutputBuffer output) {
+        byte[][] pixels = new byte[3][];
+        for (int plane = 0; plane < 3; plane++) {
+            int width = plane == 0 ? output.width : (output.width + 1) / 2;
+            int height = plane == 0 ? output.height : (output.height + 1) / 2;
+            pixels[plane] = new byte[width * height];
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    pixels[plane][y * width + x] = output.yuvPlanes[plane].get(y * output.yuvStrides[plane] + x);
+                }
+            }
+        }
+        return pixels;
+    }
+
+    private static byte[] surfacePixels(FfmpegVideoRenderer renderer, VideoDecoderOutputBuffer output)
+            throws Exception {
+        int width = output.width;
+        int height = output.height;
+        // Each call creates a new Surface; the decoder must release the old CPU producer.
+        try (ImageReader images = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)) {
+            renderer.renderOutputBufferToSurface(output, images.getSurface());
+            try (Image image = images.acquireNextImage()) {
+                assertNotNull(image);
+                assertEquals(width, image.getWidth());
+                assertEquals(height, image.getHeight());
+                Image.Plane plane = image.getPlanes()[0];
+                ByteBuffer buffer = plane.getBuffer();
+                byte[] pixels = new byte[width * height * 4];
+                for (int y = 0; y < height; y++) {
+                    for (int x = 0; x < width; x++) {
+                        for (int c = 0; c < 4; c++) {
+                            pixels[(y * width + x) * 4 + c] =
+                                    buffer.get(y * plane.getRowStride() + x * plane.getPixelStride() + c);
+                        }
+                    }
+                }
+                return pixels;
+            }
+        }
+    }
+
+    private static byte[] rotate(byte[] source, int width, int height, int pixelSize, int rotation) {
+        boolean quarter = rotation == 90 || rotation == 270;
+        int dw = quarter ? height : width;
+        int dh = quarter ? width : height;
+        byte[] expected = new byte[source.length];
+        for (int y = 0; y < dh; y++) {
+            for (int x = 0; x < dw; x++) {
+                int sx = rotation == 90 ? y : rotation == 180 ? width - 1 - x :
+                        rotation == 270 ? width - 1 - y : x;
+                int sy = rotation == 90 ? height - 1 - x : rotation == 180 ? height - 1 - y :
+                        rotation == 270 ? x : y;
+                System.arraycopy(source, (sy * width + sx) * pixelSize,
+                        expected, (y * dw + x) * pixelSize, pixelSize);
+            }
+        }
+        return expected;
+    }
+
     private static void assertSupport(FfmpegVideoRenderer renderer, Format format, int expected) {
         assertEquals(expected, RendererCapabilities.getFormatSupport(renderer.supportsFormat(format)));
     }
 
     private static VideoDecoderOutputBuffer decodeKeyFrame(FfmpegVideoDecoder decoder) throws Exception {
+        return decodeKeyFrame(decoder, VP9, 0);
+    }
+
+    private static VideoDecoderOutputBuffer decodeKeyFrame(FfmpegVideoDecoder decoder, Format format, long timeUs) throws Exception {
         byte[] packet;
         try (DataInputStream asset = new DataInputStream(InstrumentationRegistry.getInstrumentation()
                 .getContext().getAssets().open("vp9.ivf"))) {
@@ -170,8 +297,8 @@ public class FfmpegVideoRendererTest {
         assertNotNull(input);
         input.ensureSpaceForWrite(packet.length);
         input.data.put(packet);
-        input.timeUs = 0;
-        input.format = VP9;
+        input.timeUs = timeUs;
+        input.format = format;
         input.flip();
         decoder.queueInputBuffer(input);
         long deadline = SystemClock.elapsedRealtime() + 5000;

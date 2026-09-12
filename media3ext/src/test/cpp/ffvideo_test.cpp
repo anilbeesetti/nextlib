@@ -118,6 +118,87 @@ static void CheckColorsAndRange() {
     puts("PASS: unknown/BT.709/BT.601 matrices and full/limited range cache transitions");
 }
 
+// Odd dimensions, padded/negative source strides and both conversion formats.
+static void CheckRotatedConversion() {
+    ScaleContext scale;
+    for (AVPixelFormat input : {AV_PIX_FMT_YUV420P, AV_PIX_FMT_YUV444P10LE}) {
+        AVFrame *frame = av_frame_alloc();
+        assert(frame);
+        frame->width = 13;
+        frame->height = 7;
+        frame->format = input;
+        frame->colorspace = AVCOL_SPC_BT2020_NCL;
+        frame->color_range = AVCOL_RANGE_JPEG;
+        assert(av_frame_get_buffer(frame, 32) == 0);
+        for (int plane = 0; plane < 3; plane++) {
+            const bool subsampled = input == AV_PIX_FMT_YUV420P && plane;
+            const int w = subsampled ? 7 : 13;
+            const int h = subsampled ? 4 : 7;
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    const int value = 32 + plane * 31 + y * 13 + x * 3;
+                    if (input == AV_PIX_FMT_YUV420P) {
+                        frame->data[plane][y * frame->linesize[plane] + x] = value;
+                    } else {
+                        reinterpret_cast<uint16_t *>(frame->data[plane] + y * frame->linesize[plane])[x] = value * 4;
+                    }
+                }
+            }
+        }
+        for (bool negative : {false, true}) {
+            if (negative) {
+                for (int plane = 0; plane < 3; plane++) {
+                    int h = input == AV_PIX_FMT_YUV420P && plane ? 4 : 7;
+                    frame->data[plane] += (h - 1) * frame->linesize[plane];
+                    frame->linesize[plane] *= -1;
+                }
+            }
+            for (AVPixelFormat output : {AV_PIX_FMT_YUV420P, AV_PIX_FMT_RGBA}) {
+                AVFrame *reference = av_frame_alloc();
+                assert(reference);
+                reference->width = frame->width;
+                reference->height = frame->height;
+                reference->format = output;
+                assert(av_frame_get_buffer(reference, 32) == 0);
+                assert(scale.Convert(frame, output, reference->data, reference->linesize, 0));
+                for (int rotation : {0, 90, 180, 270, 0}) {
+                    const bool quarter = rotation == 90 || rotation == 270;
+                    AVFrame *rotated = av_frame_alloc();
+                    assert(rotated);
+                    rotated->width = quarter ? frame->height : frame->width;
+                    rotated->height = quarter ? frame->width : frame->height;
+                    rotated->format = output;
+                    assert(av_frame_get_buffer(rotated, 32) == 0);
+                    assert(scale.Convert(frame, output, rotated->data, rotated->linesize, rotation));
+                    const int pixelSize = output == AV_PIX_FMT_RGBA ? 4 : 1;
+                    for (int plane = 0; plane < (pixelSize == 4 ? 1 : 3); plane++) {
+                        const int w = plane ? 7 : 13;
+                        const int h = plane ? 4 : 7;
+                        const int dw = quarter ? h : w;
+                        const int dh = quarter ? w : h;
+                        for (int y = 0; y < dh; y++) {
+                            for (int x = 0; x < dw; x++) {
+                                // Inverse mapping is independent of the production forward mapping.
+                                int sx = rotation == 90 ? y : rotation == 180 ? w - 1 - x :
+                                         rotation == 270 ? w - 1 - y : x;
+                                int sy = rotation == 90 ? h - 1 - x : rotation == 180 ? h - 1 - y :
+                                         rotation == 270 ? x : y;
+                                assert(memcmp(rotated->data[plane] + y * rotated->linesize[plane] + x * pixelSize,
+                                              reference->data[plane] + sy * reference->linesize[plane] + sx * pixelSize,
+                                              pixelSize) == 0);
+                            }
+                        }
+                    }
+                    av_frame_free(&rotated);
+                }
+                av_frame_free(&reference);
+            }
+        }
+        av_frame_free(&frame);
+    }
+    puts("PASS: 0/90/180/270 RGBA/YUV rotation, 13x7, odd chroma, negative/padded strides, 10-bit/full-range conversion");
+}
+
 static void CheckInvalidWindowBuffers() {
     JNINativeInterface functions{};
     functions.GetLongField = [](JNIEnv *, jobject buffer, jfieldID) -> jlong {
@@ -141,7 +222,7 @@ static void CheckInvalidWindowBuffers() {
         ANativeWindow_acquire(window);
         invalidBuffer = fault;
         assert(render(&env, nullptr, reinterpret_cast<jlong>(&context), surface,
-                reinterpret_cast<jobject>(frame), frame->width, frame->height) == VIDEO_DECODER_ERROR_OTHER);
+                reinterpret_cast<jobject>(frame), frame->width, frame->height, 0) == VIDEO_DECODER_ERROR_OTHER);
         AImage *image = nullptr;
         assert(AImageReader_acquireNextImage(reader, &image) == AMEDIA_IMGREADER_NO_BUFFER_AVAILABLE);
         assert(context.native_window == nullptr);
@@ -152,7 +233,7 @@ static void CheckInvalidWindowBuffers() {
         context.native_window = window;
         ANativeWindow_acquire(window);
         assert(render(&env, nullptr, reinterpret_cast<jlong>(&context), surface,
-                reinterpret_cast<jobject>(frame), frame->width, frame->height) == VIDEO_DECODER_SUCCESS);
+                reinterpret_cast<jobject>(frame), frame->width, frame->height, 0) == VIDEO_DECODER_SUCCESS);
         assert(AImageReader_acquireNextImage(reader, &image) == AMEDIA_OK);
         uint8_t *pixels = nullptr;
         int length = 0;
@@ -283,4 +364,5 @@ int main() {
     CheckVpDecoders();
     CheckColorsAndRange();
     CheckInvalidWindowBuffers();
+    CheckRotatedConversion();
 }
