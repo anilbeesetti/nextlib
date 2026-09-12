@@ -29,16 +29,28 @@ dependencies {
 
 ## Basic usage
 
-Use `NextRenderersFactory` as a drop-in `DefaultRenderersFactory` replacement to make the bundled
-FFmpeg decoders available to Media3:
+Use `NextRenderersFactory` with extension renderers enabled to make the bundled FFmpeg decoders
+available to Media3. The factory retains `DefaultRenderersFactory`'s default of `OFF`:
 
 ```kotlin
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ExoPlayer
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
+
+// OFF: Do not add FFmpeg extension renderers.
+// ON: Enable them at normal priority, after platform renderers.
+// PREFER: Give FFmpeg extension renderers priority.
 val renderersFactory = NextRenderersFactory(applicationContext)
+    .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
 
 ExoPlayer.Builder(applicationContext)
     .setRenderersFactory(renderersFactory)
     .build()
 ```
+
+This controls renderer priority and capability fallback: `ON` allows FFmpeg when platform
+renderers cannot support a format. It does not automatically recover from runtime decoder failures;
+applications own error recovery.
 
 ## Runtime decoder switching
 
@@ -61,7 +73,8 @@ decoderManager.detach()
 player.release()
 ```
 
-Video and audio are selected independently. See
+Installing a `DecoderManager` enables extension renderers at normal priority (`ON`) and MediaCodec
+initialization fallback. Video and audio are selected independently. See
 [`media3ext/DECODER_SWITCHING.md`](media3ext/DECODER_SWITCHING.md) for mode behavior, lifecycle, and
 application-owned error handling.
 
