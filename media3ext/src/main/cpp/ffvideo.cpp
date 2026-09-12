@@ -7,7 +7,6 @@
 #include <array>
 #include <climits>
 #include <cstring>
-#include <deque>
 #include <memory>
 #include "ffcommon.h"
 
@@ -22,6 +21,7 @@ extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/error.h>
+#include <libavutil/mathematics.h>
 #include <libavutil/opt.h>
 #include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
@@ -67,6 +67,10 @@ static int native_window_api_disconnect(ANativeWindow *window, int api) {
 }
 
 static const int VIDEO_DECODER_SUCCESS = 0;
+static const int VIDEO_DECODER_AGAIN = 1;
+static const int VIDEO_DECODER_END_OF_STREAM = 2;
+// Media3 C.TIME_UNSET differs from FFmpeg AV_NOPTS_VALUE.
+static constexpr int64_t kTimeUnset = INT64_MIN + 1;
 static const int VIDEO_DECODER_ERROR_INVALID_DATA = -1;
 static const int VIDEO_DECODER_ERROR_OTHER = -2;
 
@@ -134,54 +138,26 @@ static int DiscardLockedBuffer(ANativeWindow *window) {
 }
 
 struct JniContext {
-    ~JniContext() {
-        ClearPendingFrames();
-        releaseContext(codecContext);
-    }
+    ~JniContext() { releaseContext(codecContext); }
 
-    void ClearPendingFrames() {
-        for (AVFrame *frame : pendingFrames) av_frame_free(&frame);
-        pendingFrames.clear();
-    }
-
-    // Returns VIDEO_DECODER_* statuses, keeping receive errors distinct from bad input.
+    // Never receive or queue frames here. Java retains an unaccepted packet and
+    // applies backpressure using its fixed output pool before retrying the send.
     int SendPacket(const AVPacket *packet) {
-        int result;
-        while ((result = avcodec_send_packet(codecContext, packet)) == AVERROR(EAGAIN)) {
-            // FFmpeg has not accepted this packet. Preserve queued output and retry
-            // the same input; dropping it corrupts VP9 reference frames.
-            AVFrame *frame = av_frame_alloc();
-            if (!frame) {
-                logError("av_frame_alloc", AVERROR(ENOMEM));
-                return VIDEO_DECODER_ERROR_OTHER;
-            }
-            result = avcodec_receive_frame(codecContext, frame);
-            if (result < 0) {
-                av_frame_free(&frame);
-                // FFmpeg 6's VP9 filter can consume hidden alt-ref frames without
-                // yielding output. Input may now be accepted, so retry it.
-                if (result == AVERROR(EAGAIN)) continue;
-                logError("avcodec_receive_frame", result);
-                // Match ffmpegReceiveFrame: a receive failure is fatal, never a
-                // reason to skip the current packet, which is still unaccepted.
-                return VIDEO_DECODER_ERROR_OTHER;
-            }
-            pendingFrames.push_back(frame);
-        }
+        const int result = avcodec_send_packet(codecContext, packet);
+        if (result == AVERROR(EAGAIN)) return VIDEO_DECODER_AGAIN;
         if (result < 0) {
             logError("avcodec_send_packet", result);
             return result == AVERROR_INVALIDDATA ? VIDEO_DECODER_ERROR_INVALID_DATA
                                                  : VIDEO_DECODER_ERROR_OTHER;
         }
+        if (packet && !sentPacket) {
+            nextTimeUs = packet->pts == AV_NOPTS_VALUE ? 0 : packet->pts;
+            sentPacket = true;
+        }
         return VIDEO_DECODER_SUCCESS;
     }
 
     int ReceiveFrame(AVFrame **frame) {
-        if (!pendingFrames.empty()) {
-            *frame = pendingFrames.front();
-            pendingFrames.pop_front();
-            return 0;
-        }
         *frame = av_frame_alloc();
         return *frame ? avcodec_receive_frame(codecContext, *frame) : AVERROR(ENOMEM);
     }
@@ -221,7 +197,8 @@ struct JniContext {
     jmethodID init_method{};
 
     AVCodecContext *codecContext{};
-    std::deque<AVFrame *> pendingFrames;
+    bool sentPacket = false;
+    int64_t nextTimeUs = 0;
     // Decoding and rendering run on different threads.
     ScaleContext renderContext;
     ScaleContext yuvContext;
@@ -258,10 +235,11 @@ JniContext *createVideoContext(JNIEnv *env,
         env->GetByteArrayRegion(extraData, 0, size, (jbyte *) codecContext->extradata);
     }
 
+    // Packet/frame timestamps and durations crossing JNI are in microseconds.
+    codecContext->pkt_timebase = AV_TIME_BASE_Q;
     codecContext->thread_count = threads;
     if (codec->id == AV_CODEC_ID_AV1) {
-        // SimpleDecoder expects a frame per sample and does not drain at EOS.
-        // Disable dav1d's frame delay so each sample yields its output promptly.
+        // Retain dav1d's prompt output for low-latency playback.
         codecContext->flags |= AV_CODEC_FLAG_LOW_DELAY;
     }
     codecContext->err_recognition = AV_EF_IGNORE_ERR;
@@ -311,7 +289,8 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         return 0L;
     }
 
-    jniContext->ClearPendingFrames();
+    jniContext->sentPacket = false;
+    jniContext->nextTimeUs = 0;
     avcodec_flush_buffers(context);
     return (jlong) jniContext;
 }
@@ -402,6 +381,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                  jlong input_time) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
 
+    if (!encoded_data) return jniContext->SendPacket(nullptr);
     auto *inputBuffer = (uint8_t *) env->GetDirectBufferAddress(encoded_data);
     if (!inputBuffer || length < 0 ||
         env->GetDirectBufferCapacity(encoded_data) < static_cast<jlong>(length) + AV_INPUT_BUFFER_PADDING_SIZE) {
@@ -413,7 +393,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     packet.pos = -1;
     packet.data = inputBuffer;
     packet.size = length;
-    packet.pts = input_time;
+    packet.pts = input_time == kTimeUnset ? AV_NOPTS_VALUE : input_time;
 
     // Queue input data.
     int result = jniContext->SendPacket(&packet);
@@ -428,18 +408,15 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                    jlong jContext,
                                                                                    jint output_mode,
                                                                                    jobject output_buffer,
-                                                                                   jboolean decode_only) {
+                                                                                   jfloat frame_rate) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
 
     AVFrame *frame = nullptr;
     int result = jniContext->ReceiveFrame(&frame);
 
-    // fail
-    if (decode_only || result == AVERROR(EAGAIN)) {
-        // This is not an error. The input data was decode-only or no displayable
-        // frames are available.
+    if (result == AVERROR(EAGAIN) || result == AVERROR_EOF) {
         av_frame_free(&frame);
-        return VIDEO_DECODER_ERROR_INVALID_DATA;
+        return result == AVERROR_EOF ? VIDEO_DECODER_END_OF_STREAM : VIDEO_DECODER_AGAIN;
     }
     if (result) {
         av_frame_free(&frame);
@@ -447,7 +424,23 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         return VIDEO_DECODER_ERROR_OTHER;
     }
 
-    env->CallVoidMethod(output_buffer, jniContext->init_method, frame->pts, output_mode, nullptr);
+    int64_t timeUs = frame->best_effort_timestamp;
+    if (timeUs == AV_NOPTS_VALUE) timeUs = frame->pts;
+    // With no frame PTS, extrapolate from the last displayed frame (or first
+    // accepted packet). Prefer decoded duration, then the container frame rate.
+    // If neither is known, repeat the last time instead of inventing a rate.
+    if (timeUs == AV_NOPTS_VALUE) timeUs = jniContext->nextTimeUs;
+    jniContext->nextTimeUs = timeUs;
+    if (frame->duration > 0 && timeUs <= INT64_MAX - frame->duration) {
+        jniContext->nextTimeUs += frame->duration;
+    } else if (frame_rate > 0) {
+        const AVRational rate = av_d2q(frame_rate, 1000000);
+        if (rate.num > 0 && rate.den > 0) {
+            // Avoid cumulative microsecond rounding moving a frame across a seek boundary.
+            jniContext->nextTimeUs = av_add_stable(AV_TIME_BASE_Q, timeUs, av_inv_q(rate), 1);
+        }
+    }
+    env->CallVoidMethod(output_buffer, jniContext->init_method, timeUs, output_mode, nullptr);
     if (env->ExceptionCheck()) {
         av_frame_free(&frame);
         return VIDEO_DECODER_ERROR_OTHER;

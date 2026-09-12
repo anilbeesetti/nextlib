@@ -10,34 +10,45 @@ import androidx.media3.common.util.Assertions;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
 import androidx.media3.decoder.DecoderInputBuffer;
-import androidx.media3.decoder.SimpleDecoder;
+import androidx.media3.decoder.Decoder;
 import androidx.media3.decoder.VideoDecoderOutputBuffer;
 
 import java.nio.ByteBuffer;
-import java.util.ArrayList;
+import java.util.ArrayDeque;
 import java.util.List;
+import java.util.concurrent.Executor;
 
 /**
  * Ffmpeg Video decoder.
  */
 @UnstableApi
-final class FfmpegVideoDecoder extends
-        SimpleDecoder<DecoderInputBuffer, VideoDecoderOutputBuffer, FfmpegDecoderException> {
+final class FfmpegVideoDecoder implements
+        Decoder<DecoderInputBuffer, VideoDecoderOutputBuffer, FfmpegDecoderException> {
 
-    // LINT.IfChange
-    private static final int VIDEO_DECODER_SUCCESS = 0;
-    private static final int VIDEO_DECODER_ERROR_INVALID_DATA = -1;
-    private static final int VIDEO_DECODER_ERROR_OTHER = -2;
-    // LINT.ThenChange(../../../../../../../jni/ffmpeg_jni.cc)
+    private static final int SUCCESS = 0;
+    private static final int AGAIN = 1;
+    private static final int END_OF_STREAM = 2;
+    private static final int INVALID_DATA = -1;
 
+    private final Object lock = new Object();
+    private final ArrayDeque<DecoderInputBuffer> availableInputs = new ArrayDeque<>();
+    private final ArrayDeque<DecoderInputBuffer> queuedInputs = new ArrayDeque<>();
+    private final ArrayDeque<VideoDecoderOutputBuffer> availableOutputs = new ArrayDeque<>();
+    private final ArrayDeque<VideoDecoderOutputBuffer> queuedOutputs = new ArrayDeque<>();
+    // Includes renderer-held outputs, which must also be reclaimed on decoder replacement.
+    private final VideoDecoderOutputBuffer[] outputBuffers;
+    private final Thread decodeThread;
     private final String codecName;
+    private final Format format;
     private long nativeContext;
-    // Initialized by createOutputBuffer() during the SimpleDecoder constructor.
-    // Keep every buffer, including outputs held by a renderer during decoder reinitialization.
-    private List<VideoDecoderOutputBuffer> outputBuffers;
-    @Nullable
-    private final byte[] extraData;
-    private Format format;
+    @Nullable private DecoderInputBuffer dequeuedInput;
+    @Nullable private FfmpegDecoderException exception;
+    @Nullable private Callback callback;
+    @Nullable private Executor executor;
+    private long outputStartTimeUs = C.TIME_UNSET;
+    private int generation;
+    private boolean resetPending;
+    private boolean released;
 
     @C.VideoOutputMode
     private volatile int outputMode;
@@ -48,25 +59,38 @@ final class FfmpegVideoDecoder extends
      * @param numInputBuffers        Number of input buffers.
      * @param numOutputBuffers       Number of output buffers.
      * @param initialInputBufferSize The initial size of each input buffer, in bytes.
-     * @param threads                Number of threads libgav1 will use to decode.
+     * @param threads                Number of threads FFmpeg will use to decode.
      * @throws FfmpegDecoderException Thrown if an exception occurs when initializing the
      *                                decoder.
      */
     public FfmpegVideoDecoder(int numInputBuffers, int numOutputBuffers, int initialInputBufferSize, int threads, Format format) throws FfmpegDecoderException {
-        super(new DecoderInputBuffer[numInputBuffers], new VideoDecoderOutputBuffer[numOutputBuffers]);
+        Assertions.checkArgument(numInputBuffers > 0 && numOutputBuffers > 0);
 
         if (!FfmpegLibrary.isAvailable()) {
             throw new FfmpegDecoderException("Failed to load decoder native library.");
         }
         assert format.sampleMimeType != null;
         codecName = Assertions.checkNotNull(FfmpegLibrary.getCodecName(format.sampleMimeType));
-        extraData = getExtraData(format.sampleMimeType, format.initializationData);
+        byte[] extraData = getExtraData(format.sampleMimeType, format.initializationData);
         this.format = format;
         nativeContext = ffmpegInitialize(codecName, extraData, threads);
         if (nativeContext == 0) {
             throw new FfmpegDecoderException("Failed to initialize decoder.");
         }
-        setInitialInputBufferSize(initialInputBufferSize);
+        for (int i = 0; i < numInputBuffers; i++) {
+            DecoderInputBuffer input = new DecoderInputBuffer(
+                    DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT,
+                    FfmpegLibrary.getInputBufferPaddingSize());
+            input.ensureSpaceForWrite(initialInputBufferSize);
+            availableInputs.add(input);
+        }
+        outputBuffers = new VideoDecoderOutputBuffer[numOutputBuffers];
+        for (int i = 0; i < numOutputBuffers; i++) {
+            outputBuffers[i] = new VideoDecoderOutputBuffer(this::releaseOutputBuffer);
+            availableOutputs.add(outputBuffers[i]);
+        }
+        decodeThread = new Thread(this::run, "NextLib:FfmpegVideoDecoder");
+        decodeThread.start();
     }
 
     /**
@@ -110,92 +134,251 @@ final class FfmpegVideoDecoder extends
     }
 
     @Override
-    protected DecoderInputBuffer createInputBuffer() {
-        return new DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT, FfmpegLibrary.getInputBufferPaddingSize());
-    }
-
-    @Override
-    protected VideoDecoderOutputBuffer createOutputBuffer() {
-        if (outputBuffers == null) outputBuffers = new ArrayList<>();
-        VideoDecoderOutputBuffer outputBuffer = new VideoDecoderOutputBuffer(this::releaseOutputBuffer);
-        outputBuffers.add(outputBuffer);
-        return outputBuffer;
-    }
-
-    @Override
-    protected void releaseOutputBuffer(VideoDecoderOutputBuffer outputBuffer) {
-        synchronized (outputBuffers) {
-            releaseNativeFrame(outputBuffer);
-        }
-        super.releaseOutputBuffer(outputBuffer);
-    }
-
-    private void releaseNativeFrame(VideoDecoderOutputBuffer outputBuffer) {
-        if (outputBuffer.decoderPrivate != 0) {
-            ffmpegReleaseFrame(outputBuffer.decoderPrivate);
-            outputBuffer.decoderPrivate = 0;
+    public void setOutputStartTimeUs(long timeUs) {
+        synchronized (lock) {
+            outputStartTimeUs = timeUs;
         }
     }
 
     @Override
-    protected FfmpegDecoderException createUnexpectedDecodeException(Throwable error) {
-        return new FfmpegDecoderException("Unexpected decode error", error);
+    public void setCallback(Callback callback, Executor executor) {
+        synchronized (lock) {
+            this.callback = callback;
+            this.executor = executor;
+        }
     }
 
     @Nullable
     @Override
-    protected FfmpegDecoderException decode(DecoderInputBuffer inputBuffer, VideoDecoderOutputBuffer outputBuffer, boolean reset) {
-        if (reset) {
-            nativeContext = ffmpegReset(nativeContext);
-            if (nativeContext == 0) {
-                return new FfmpegDecoderException("Error resetting (see logcat).");
+    public DecoderInputBuffer dequeueInputBuffer() throws FfmpegDecoderException {
+        synchronized (lock) {
+            maybeThrowException();
+            Assertions.checkState(dequeuedInput == null && !released);
+            dequeuedInput = availableInputs.pollFirst();
+            return dequeuedInput;
+        }
+    }
+
+    @Override
+    public void queueInputBuffer(DecoderInputBuffer input) throws FfmpegDecoderException {
+        synchronized (lock) {
+            maybeThrowException();
+            Assertions.checkArgument(input == dequeuedInput);
+            queuedInputs.addLast(input);
+            dequeuedInput = null;
+            lock.notifyAll();
+        }
+    }
+
+    @Nullable
+    @Override
+    public VideoDecoderOutputBuffer dequeueOutputBuffer() throws FfmpegDecoderException {
+        synchronized (lock) {
+            maybeThrowException();
+            return queuedOutputs.pollFirst();
+        }
+    }
+
+    private void maybeThrowException() throws FfmpegDecoderException {
+        if (exception != null) throw exception;
+    }
+
+    private void releaseInputBuffer(DecoderInputBuffer input) {
+        input.clear();
+        availableInputs.addLast(input);
+    }
+
+    private void releaseOutputBuffer(VideoDecoderOutputBuffer output) {
+        synchronized (lock) {
+            releaseNativeFrame(output);
+            output.clear();
+            if (!released) availableOutputs.addLast(output);
+            lock.notifyAll();
+        }
+    }
+
+    private void releaseNativeFrame(VideoDecoderOutputBuffer output) {
+        if (output.decoderPrivate != 0) {
+            ffmpegReleaseFrame(output.decoderPrivate);
+            output.decoderPrivate = 0;
+        }
+    }
+
+    @Override
+    public void flush() {
+        synchronized (lock) {
+            generation++;
+            resetPending = true;
+            if (dequeuedInput != null) {
+                releaseInputBuffer(dequeuedInput);
+                dequeuedInput = null;
+            }
+            while (!queuedInputs.isEmpty()) releaseInputBuffer(queuedInputs.removeFirst());
+            while (!queuedOutputs.isEmpty()) queuedOutputs.removeFirst().release();
+            // The worker retains its in-flight input until JNI returns. Its output is
+            // discarded by the generation check before native flush and any new input.
+            lock.notifyAll();
+        }
+    }
+
+    private void run() {
+        try {
+            decodeLoop();
+        } catch (FfmpegDecoderException | RuntimeException | OutOfMemoryError error) {
+            synchronized (lock) {
+                exception = error instanceof FfmpegDecoderException
+                        ? (FfmpegDecoderException) error
+                        : new FfmpegDecoderException("Unexpected decode error", error);
+                notifyCallback(false);
+            }
+        } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            synchronized (lock) {
+                exception = new FfmpegDecoderException("Decode thread interrupted", error);
+                notifyCallback(false);
             }
         }
+    }
 
-        // send packet
-        ByteBuffer inputData = Util.castNonNull(inputBuffer.data);
-        int inputSize = inputData.limit();
-        // enqueue origin data
-        int sendPacketResult = ffmpegSendPacket(nativeContext, inputData, inputSize, inputBuffer.timeUs);
-        if (sendPacketResult == VIDEO_DECODER_ERROR_INVALID_DATA) {
-            outputBuffer.shouldBeSkipped = true;
-            return null;
-        } else if (sendPacketResult == VIDEO_DECODER_ERROR_OTHER) {
-            return new FfmpegDecoderException("ffmpegDecode error: (see logcat)");
+    private void decodeLoop() throws FfmpegDecoderException, InterruptedException {
+        DecoderInputBuffer input = null;
+        boolean receive = false;
+        boolean draining = false;
+        boolean ended = false;
+        int skipped = 0;
+        int emptyRetries = 0;
+        while (true) {
+            VideoDecoderOutputBuffer output;
+            boolean reset;
+            int currentGeneration;
+            synchronized (lock) {
+                while (!released && !resetPending && (ended || availableOutputs.isEmpty()
+                        || (!receive && input == null && queuedInputs.isEmpty()))) {
+                    lock.wait();
+                }
+                if (released) return;
+                currentGeneration = generation;
+                reset = resetPending;
+                resetPending = false;
+                if (reset) {
+                    if (input != null) {
+                        releaseInputBuffer(input);
+                        notifyCallback(true);
+                    }
+                    input = null;
+                    receive = draining = ended = false;
+                    skipped = emptyRetries = 0;
+                }
+                if (!reset && !receive && input == null) input = queuedInputs.removeFirst();
+                output = reset ? null : availableOutputs.removeFirst();
+            }
+
+            // JNI runs outside the pool lock so decoding never blocks the playback
+            // thread from queueing, releasing buffers or requesting a seek.
+            if (reset) {
+                if (ffmpegReset(nativeContext) == 0) {
+                    throw new FfmpegDecoderException("Error resetting decoder (see logcat).");
+                }
+                continue;
+            }
+            int result;
+            if (receive) {
+                result = ffmpegReceiveFrame(nativeContext, outputMode, output, format.frameRate);
+            } else {
+                Assertions.checkNotNull(input);
+                ByteBuffer data = input.isEndOfStream() ? null : Util.castNonNull(input.data);
+                result = ffmpegSendPacket(nativeContext, data,
+                        data == null ? 0 : data.limit(), input.timeUs);
+            }
+
+            synchronized (lock) {
+                if (released || currentGeneration != generation) {
+                    output.release();
+                    continue;
+                }
+                if (receive) {
+                    if (result == SUCCESS) {
+                        emptyRetries = 0;
+                        if (outputStartTimeUs != C.TIME_UNSET && output.timeUs < outputStartTimeUs) {
+                            skipped++;
+                            output.release();
+                        } else {
+                            output.format = format;
+                            output.skippedOutputBufferCount = skipped;
+                            skipped = 0;
+                            queuedOutputs.addLast(output);
+                            notifyCallback(false);
+                        }
+                        // Keep receiving, even with no more Java input queued.
+                    } else if (result == END_OF_STREAM && draining) {
+                        output.addFlag(C.BUFFER_FLAG_END_OF_STREAM);
+                        output.skippedOutputBufferCount = skipped;
+                        queuedOutputs.addLast(output);
+                        ended = true;
+                        notifyCallback(false);
+                    } else {
+                        output.release();
+                        if (result != AGAIN || draining) {
+                            throw new FfmpegDecoderException("Error receiving video frame (see logcat).");
+                        }
+                        // VP9's bitstream filter can consume hidden frames here after
+                        // send-EAGAIN. Retry the retained packet, but fail a stuck codec.
+                        // VP9 superframes contain at most eight frames; allow two
+                        // superframes worth of empty receives before reporting failure.
+                        if (input != null && ++emptyRetries > 16) {
+                            throw new FfmpegDecoderException("Video decoder made no progress.");
+                        }
+                        receive = false;
+                    }
+                } else {
+                    output.release();
+                    if (result == SUCCESS || result == INVALID_DATA) {
+                        draining = input.isEndOfStream();
+                        if (result == INVALID_DATA) {
+                            if (draining) throw new FfmpegDecoderException("Error draining video decoder.");
+                            skipped++;
+                        }
+                        releaseInputBuffer(input);
+                        input = null;
+                        emptyRetries = 0;
+                        notifyCallback(true);
+                    } else if (result != AGAIN) {
+                        throw new FfmpegDecoderException("Error sending video packet (see logcat).");
+                    }
+                    // On EAGAIN input remains owned by this worker, including EOS.
+                    receive = true;
+                }
+            }
         }
+    }
 
-        // receive frame
-        boolean decodeOnly = !isAtLeastOutputStartTimeUs(inputBuffer.timeUs);
-        // We need to dequeue the decoded frame from the decoder even when the input data is
-        // decode-only.
-        int getFrameResult = ffmpegReceiveFrame(nativeContext, outputMode, outputBuffer, decodeOnly);
-        if (getFrameResult == VIDEO_DECODER_ERROR_OTHER) {
-            return new FfmpegDecoderException("ffmpegDecode error: (see logcat)");
+    private void notifyCallback(boolean inputAvailable) {
+        Callback current = callback;
+        if (current != null && executor != null) {
+            executor.execute(inputAvailable ? current::onInputBufferAvailable : current::onOutputBufferAvailable);
         }
-
-        if (getFrameResult == VIDEO_DECODER_ERROR_INVALID_DATA) {
-            outputBuffer.shouldBeSkipped = true;
-        }
-
-        if (!decodeOnly) {
-            outputBuffer.format = inputBuffer.format;
-        }
-
-        return null;
     }
 
     @Override
     public void release() {
-        super.release();
-        // The decode thread has stopped. Reclaim queued and renderer-held frames together;
-        // clearing decoderPrivate also makes a later outputBuffer.release() harmless.
-        synchronized (outputBuffers) {
-            for (VideoDecoderOutputBuffer outputBuffer : outputBuffers) {
-                releaseNativeFrame(outputBuffer);
+        synchronized (lock) {
+            released = true;
+            lock.notifyAll();
+        }
+        boolean interrupted = false;
+        while (decodeThread.isAlive()) {
+            try {
+                decodeThread.join();
+            } catch (InterruptedException error) {
+                interrupted = true;
             }
+        }
+        synchronized (lock) {
+            for (VideoDecoderOutputBuffer output : outputBuffers) releaseNativeFrame(output);
             ffmpegRelease(nativeContext);
             nativeContext = 0;
         }
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
     /**
@@ -214,7 +397,7 @@ final class FfmpegVideoDecoder extends
         }
         if (ffmpegRenderFrame(
                 nativeContext, surface,
-                outputBuffer, outputBuffer.width, outputBuffer.height) == VIDEO_DECODER_ERROR_OTHER) {
+                outputBuffer, outputBuffer.width, outputBuffer.height) != SUCCESS) {
             throw new FfmpegDecoderException("Buffer render error: ");
         }
     }
@@ -232,28 +415,11 @@ final class FfmpegVideoDecoder extends
             int displayedWidth,
             int displayedHeight);
 
-    /**
-     * Decodes the encoded data passed.
-     *
-     * @param context     Decoder context.
-     * @param encodedData Encoded data.
-     * @param length      Length of the data buffer.
-     * @return {@link #VIDEO_DECODER_SUCCESS} if successful, {@link #VIDEO_DECODER_ERROR_OTHER} if an
-     * error occurred.
-     */
-    private native int ffmpegSendPacket(long context, ByteBuffer encodedData, int length,
-                                        long inputTime);
+    // Null data sends the drain packet. AGAIN means this input is still unaccepted.
+    private native int ffmpegSendPacket(long context, @Nullable ByteBuffer encodedData, int length,
+                                       long inputTimeUs);
 
-    /**
-     * Gets the decoded frame.
-     *
-     * @param context      Decoder context.
-     * @param outputBuffer Output buffer for the decoded frame.
-     * @return {@link #VIDEO_DECODER_SUCCESS} if successful, {@link #VIDEO_DECODER_ERROR_INVALID_DATA}
-     * if successful but the frame is decode-only, {@link #VIDEO_DECODER_ERROR_OTHER} if an error
-     * occurred.
-     */
-    private native int ffmpegReceiveFrame(
-            long context, int outputMode, VideoDecoderOutputBuffer outputBuffer, boolean decodeOnly);
-
+    // SUCCESS produces one output; AGAIN requests input; END_OF_STREAM completes draining.
+    private native int ffmpegReceiveFrame(long context, int outputMode,
+                                         VideoDecoderOutputBuffer outputBuffer, float frameRate);
 }

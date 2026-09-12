@@ -193,7 +193,20 @@ static void CheckVp9PacketBackpressure(const char *filename, int frameCount, int
     FILE *input = fopen(filename, "rb");
     assert(input);
     for (int pass = 0; pass < 2; pass++) {
-        assert(fseek(input, 32, SEEK_SET) == 0); // IVF file header.
+        assert(fseek(input, 32, SEEK_SET) == 0);
+        int frames = 0;
+        int blocked = 0;
+        auto receive = [&]() {
+            AVFrame *frame = nullptr;
+            int result = context.ReceiveFrame(&frame);
+            if (!result) {
+                assert(frame->pts == frames && frame->width == width && frame->height == height);
+                assert(frame->format == AV_PIX_FMT_YUV420P);
+                frames++;
+            }
+            av_frame_free(&frame);
+            return result;
+        };
         for (int index = 0; index < frameCount; index++) {
             uint8_t header[12];
             assert(fread(header, 1, sizeof(header), input) == sizeof(header));
@@ -202,41 +215,35 @@ static void CheckVp9PacketBackpressure(const char *filename, int frameCount, int
             assert(packet && av_new_packet(packet, size) == 0);
             assert(fread(packet->data, 1, size, input) == static_cast<size_t>(size));
             packet->pts = index;
-            // Deliberately withhold output to force send_packet(EAGAIN).
-            assert(context.SendPacket(packet) == 0);
+            int result;
+            int retries = 0;
+            // Withhold output until the native API reports backpressure. The
+            // caller must keep this exact packet alive until it is accepted.
+            while ((result = context.SendPacket(packet)) == VIDEO_DECODER_AGAIN) {
+                blocked++;
+                int received = receive();
+                assert(received == 0 || received == AVERROR(EAGAIN));
+                assert(++retries <= 16);
+            }
+            assert(result == VIDEO_DECODER_SUCCESS);
             av_packet_free(&packet);
         }
-        assert(!context.pendingFrames.empty());
+        assert(blocked > 0);
         if (pass == 0) {
-            // Seeking must discard held output and let the same decoder start again.
             assert(Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegReset(
                     nullptr, nullptr, reinterpret_cast<jlong>(&context)) != 0);
-            assert(context.pendingFrames.empty());
+            assert(receive() == AVERROR(EAGAIN));
             continue;
         }
-        int frames = 0;
-        // Consume the bitstream filter's pending input before signalling EOF.
-        for (bool draining : {false, true}) {
-            if (draining) assert(context.SendPacket(nullptr) == 0);
-            while (true) {
-                AVFrame *frame = nullptr;
-                int result = context.ReceiveFrame(&frame);
-                if (result == (draining ? AVERROR_EOF : AVERROR(EAGAIN))) {
-                    av_frame_free(&frame);
-                    break;
-                }
-                assert(result == 0);
-                assert(frame->pts == frames && frame->width == width && frame->height == height);
-                assert(frame->format == AV_PIX_FMT_YUV420P);
-                frames++;
-                av_frame_free(&frame);
-            }
-        }
-        assert(frames == frameCount);
-        assert(context.pendingFrames.empty());
+        int result;
+        while ((result = receive()) == 0) {}
+        assert(result == AVERROR(EAGAIN));
+        assert(context.SendPacket(nullptr) == VIDEO_DECODER_SUCCESS);
+        while ((result = receive()) == 0) {}
+        assert(result == AVERROR_EOF && frames == frameCount);
     }
     fclose(input);
-    printf("PASS: %s packet backpressure loses no frames; reset clears pending output\n", filename);
+    printf("PASS: %s packet retries lose no frames; reset clears delayed output\n", filename);
 }
 
 static void CheckPacketErrorOrigins() {
@@ -253,9 +260,11 @@ static void CheckPacketErrorOrigins() {
     // The send is rejected before touching this input; decoding earlier data fails.
     int result = Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegSendPacket(
             &env, nullptr, reinterpret_cast<jlong>(&context), reinterpret_cast<jobject>(bytes), 1, 42);
+    assert(result == VIDEO_DECODER_AGAIN);
+    result = Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegReceiveFrame(
+            &env, nullptr, reinterpret_cast<jlong>(&context), 0, nullptr, 0);
     assert(result == VIDEO_DECODER_ERROR_OTHER);
     assert(lastErrorFunction && strcmp(lastErrorFunction, "avcodec_receive_frame") == 0);
-    assert(context.pendingFrames.empty());
     puts("PASS: receive errors retain their origin and cannot skip unaccepted input");
 
     const AVCodec *codec = avcodec_find_decoder_by_name("vp9");

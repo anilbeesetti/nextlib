@@ -1,4 +1,4 @@
-// Exercise production initialization and SimpleDecoder's one-input/one-output contract.
+// Complement the Java/JNI EOS suite by checking dav1d's retained low-delay behavior.
 #include "../../main/cpp/ffvideo.cpp"
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -41,8 +41,8 @@ int main(int argc, char **argv) {
         while ((result = av_read_frame(input, packet)) >= 0) {
             if (packet->stream_index == stream) {
                 assert(jniContext->SendPacket(packet) == VIDEO_DECODER_SUCCESS);
-                // SimpleDecoder receives once per sample and does not drain at EOS.
-                // Default dav1d frame delay used to cause EAGAIN and lost packets here.
+                // These low-delay fixtures must still yield each frame promptly.
+                // Full Java playback draining is covered by FfmpegVideoDecoderTest.
                 assert(jniContext->ReceiveFrame(&frame) == 0);
                 assert(frame->width == 640 && frame->height == 360);
                 const AVPixFmtDescriptor *format = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(frame->format));
