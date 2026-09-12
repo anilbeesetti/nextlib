@@ -29,7 +29,7 @@ int main(int argc, char **argv) {
     functions.GetMethodID = [](JNIEnv *, jclass, const char *, const char *) { return reinterpret_cast<jmethodID>(1); };
     functions.ExceptionCheck = [](JNIEnv *) -> jboolean { return false; };
     JNIEnv env{&functions};
-    std::unique_ptr<JniContext> jniContext(createVideoContext(&env, const_cast<AVCodec *>(codec), nullptr, 4));
+    std::unique_ptr<JniContext> jniContext(createVideoContext(&env, const_cast<AVCodec *>(codec), nullptr, 4, 0, 0));
     assert(jniContext);
     AVPacket *packet = av_packet_alloc();
     AVFrame *frame = nullptr;

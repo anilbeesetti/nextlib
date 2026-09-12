@@ -236,7 +236,9 @@ struct JniContext {
 JniContext *createVideoContext(JNIEnv *env,
                                AVCodec *codec,
                                jbyteArray extraData,
-                               jint threads) {
+                               jint threads,
+                               jint width,
+                               jint height) {
     auto jniContext = std::make_unique<JniContext>();
 
     AVCodecContext *codecContext = avcodec_alloc_context3(codec);
@@ -250,14 +252,18 @@ JniContext *createVideoContext(JNIEnv *env,
     if (extraData) {
         jsize size = env->GetArrayLength(extraData);
         codecContext->extradata_size = size;
-        codecContext->extradata = (uint8_t *) av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE);
+        codecContext->extradata = (uint8_t *) av_mallocz(static_cast<size_t>(size) + AV_INPUT_BUFFER_PADDING_SIZE);
         if (!codecContext->extradata) {
             LOGE("Failed to allocate extradata.");
             return nullptr;
         }
         env->GetByteArrayRegion(extraData, 0, size, (jbyte *) codecContext->extradata);
+        if (env->ExceptionCheck()) return nullptr;
     }
 
+    // Seed codecs that need container dimensions; decoded headers can override these normally.
+    codecContext->width = width > 0 ? width : 0;
+    codecContext->height = height > 0 ? height : 0;
     codecContext->thread_count = threads;
     if (codec->id == AV_CODEC_ID_AV1) {
         // SimpleDecoder expects a frame per sample and does not drain at EOS.
@@ -290,14 +296,16 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                  jobject thiz,
                                                                                  jstring codec_name,
                                                                                  jbyteArray extra_data,
-                                                                                 jint threads) {
+                                                                                 jint threads,
+                                                                                 jint width,
+                                                                                 jint height) {
     AVCodec *codec = getCodecByName(env, codec_name);
     if (!codec) {
         LOGE("Codec not found.");
         return 0L;
     }
 
-    return (jlong) createVideoContext(env, codec, extra_data, threads);
+    return (jlong) createVideoContext(env, codec, extra_data, threads, width, height);
 }
 
 extern "C"
