@@ -13,6 +13,7 @@ android {
     defaultConfig {
 
         minSdk = 23
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
         externalNativeBuild {
             cmake {
@@ -44,6 +45,12 @@ android {
     }
 }
 
+androidComponents {
+    onVariants { variant ->
+        variant.androidTest?.sources?.assets?.addStaticSourceDirectory("src/test/cpp/fixtures")
+    }
+}
+
 tasks.configureEach {
     if (name == "preBuild" || name.startsWith("configureCMake") || name.startsWith("buildCMake")) {
         dependsOn(":ffmpegSetup")
@@ -57,4 +64,6 @@ dependencies {
     compileOnly(libs.checker.qual)
     compileOnly(libs.kotlin.annotations.jvm)
     testImplementation(libs.junit)
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.runner)
 }
