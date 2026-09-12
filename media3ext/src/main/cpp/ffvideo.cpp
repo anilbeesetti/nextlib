@@ -86,7 +86,58 @@ static int GetOutputColorspace(AVColorSpace colorspace) {
 }
 
 struct ScaleContext {
-    ~ScaleContext() { sws_freeContext(context); }
+    ~ScaleContext() {
+        sws_freeContext(context);
+        av_frame_free(&converted);
+    }
+
+    bool Convert(const AVFrame *frame, AVPixelFormat format, uint8_t *dest[],
+                 const int strides[], int rotation) {
+        SwsContext *scale = Get(frame, format);
+        if (!scale) return false;
+        if (!rotation) {
+            return sws_scale(scale, frame->data, frame->linesize, 0, frame->height,
+                             dest, strides) == frame->height;
+        }
+
+        // Rotate after color/range conversion. The public window transform requires
+        // API 26; pixels also cover API 23 and Media3's YUV buffers without rotation metadata.
+        if (converted && (converted->width != frame->width ||
+                converted->height != frame->height || converted->format != format)) {
+            av_frame_free(&converted);
+        }
+        if (!converted) {
+            converted = av_frame_alloc();
+            if (!converted) return false;
+            converted->width = frame->width;
+            converted->height = frame->height;
+            converted->format = format;
+            if (av_frame_get_buffer(converted, 32) < 0) {
+                av_frame_free(&converted);
+                return false;
+            }
+        }
+        if (sws_scale(scale, frame->data, frame->linesize, 0, frame->height,
+                      converted->data, converted->linesize) != frame->height) return false;
+
+        const int pixelSize = format == AV_PIX_FMT_RGBA ? 4 : 1;
+        for (int plane = 0; plane < (pixelSize == 4 ? 1 : 3); plane++) {
+            const int width = plane ? (frame->width + 1) / 2 : frame->width;
+            const int height = plane ? (frame->height + 1) / 2 : frame->height;
+            for (int y = 0; y < height; y++) {
+                for (int x = 0; x < width; x++) {
+                    const int dx = rotation == 90 ? height - 1 - y :
+                                   rotation == 180 ? width - 1 - x : y;
+                    const int dy = rotation == 90 ? x :
+                                   rotation == 180 ? height - 1 - y : width - 1 - x;
+                    memcpy(dest[plane] + static_cast<ptrdiff_t>(dy) * strides[plane] + dx * pixelSize,
+                           converted->data[plane] + static_cast<ptrdiff_t>(y) * converted->linesize[plane] + x * pixelSize,
+                           pixelSize);
+                }
+            }
+        }
+        return true;
+    }
 
     SwsContext *Get(const AVFrame *frame, AVPixelFormat output_format) {
         const int colorspace = GetOutputColorspace(frame->colorspace);
@@ -121,6 +172,7 @@ struct ScaleContext {
     }
 
     SwsContext *context{};
+    AVFrame *converted{};
     std::array<int, 6> cached_configuration{};
 };
 
@@ -343,7 +395,8 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                   jobject surface,
                                                                                   jobject output_buffer,
                                                                                   jint displayed_width,
-                                                                                  jint displayed_height) {
+                                                                                  jint displayed_height,
+                                                                                  jint rotation_degrees) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
     auto *frame = reinterpret_cast<AVFrame *>(
             env->GetLongField(output_buffer, jniContext->decoder_private_field));
@@ -351,19 +404,17 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         return VIDEO_DECODER_ERROR_OTHER;
     }
 
-    if (jniContext->native_window_width != frame->width ||
-        jniContext->native_window_height != frame->height) {
+    if (jniContext->native_window_width != displayed_width ||
+        jniContext->native_window_height != displayed_height) {
         // RGBA is a public NDK window format; YV12 CPU buffers are not portable
         // across Surface producers (including the emulator's graphics backend).
         if (ANativeWindow_setBuffersGeometry(jniContext->native_window,
-                frame->width, frame->height, WINDOW_FORMAT_RGBA_8888)) {
+                displayed_width, displayed_height, WINDOW_FORMAT_RGBA_8888)) {
             return VIDEO_DECODER_ERROR_OTHER;
         }
-        jniContext->native_window_width = frame->width;
-        jniContext->native_window_height = frame->height;
+        jniContext->native_window_width = displayed_width;
+        jniContext->native_window_height = displayed_height;
     }
-    SwsContext *scaleContext = jniContext->renderContext.Get(frame, AV_PIX_FMT_RGBA);
-    if (!scaleContext) return VIDEO_DECODER_ERROR_OTHER;
 
     ANativeWindow_Buffer buffer;
     int result = ANativeWindow_lock(jniContext->native_window, &buffer, nullptr);
@@ -374,16 +425,16 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     if (result) return VIDEO_DECODER_ERROR_OTHER;
     jniContext->connected_as_cpu = true;
 
-    int rows = 0;
+    bool converted = false;
     if (buffer.bits && buffer.format == WINDOW_FORMAT_RGBA_8888 &&
-        buffer.width >= frame->width && buffer.height >= frame->height &&
+        buffer.width >= displayed_width && buffer.height >= displayed_height &&
         buffer.stride >= buffer.width && buffer.stride <= INT_MAX / 4) {
         uint8_t *dest[] = {static_cast<uint8_t *>(buffer.bits), nullptr, nullptr, nullptr};
         int strides[] = {buffer.stride * 4, 0, 0, 0};
-        rows = sws_scale(scaleContext, frame->data, frame->linesize,
-                        0, frame->height, dest, strides);
+        converted = jniContext->renderContext.Convert(frame, AV_PIX_FMT_RGBA,
+                dest, strides, rotation_degrees);
     }
-    if (rows != frame->height) {
+    if (!converted) {
         jniContext->connected_as_cpu = DiscardLockedBuffer(jniContext->native_window) != 0;
         jniContext->ReleaseSurface(env);
         return VIDEO_DECODER_ERROR_OTHER;
@@ -428,7 +479,8 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                    jlong jContext,
                                                                                    jint output_mode,
                                                                                    jobject output_buffer,
-                                                                                   jboolean decode_only) {
+                                                                                   jboolean decode_only,
+                                                                                   jint rotation_degrees) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
 
     AVFrame *frame = nullptr;
@@ -452,9 +504,12 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         av_frame_free(&frame);
         return VIDEO_DECODER_ERROR_OTHER;
     }
+    const bool quarter_turn = rotation_degrees == 90 || rotation_degrees == 270;
+    const int width = quarter_turn ? frame->height : frame->width;
+    const int height = quarter_turn ? frame->width : frame->height;
     if (output_mode == kOutputModeSurface) {
         env->CallVoidMethod(output_buffer, jniContext->init_for_private_frame_method,
-                           frame->width, frame->height);
+                           width, height);
         if (env->ExceptionCheck()) {
             av_frame_free(&frame);
             return VIDEO_DECODER_ERROR_OTHER;
@@ -467,11 +522,11 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     }
 
     // Media3's YUV output contract is always planar 8-bit 4:2:0, even for 10-bit/4:4:4 input.
-    const int yStride = ALIGN(frame->width, 32);
-    const int uvStride = ALIGN((frame->width + 1) / 2, 16);
+    const int yStride = ALIGN(width, 32);
+    const int uvStride = ALIGN((width + 1) / 2, 16);
     const int colorspace = GetOutputColorspace(frame->colorspace);
     const jboolean initialized = env->CallBooleanMethod(output_buffer,
-            jniContext->init_for_yuv_frame_method, frame->width, frame->height,
+            jniContext->init_for_yuv_frame_method, width, height,
             yStride, uvStride, colorspace);
     if (env->ExceptionCheck() || !initialized) {
         av_frame_free(&frame);
@@ -479,14 +534,12 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     }
     jobject data_object = env->GetObjectField(output_buffer, jniContext->data_field);
     auto *data = static_cast<uint8_t *>(env->GetDirectBufferAddress(data_object));
-    const size_t yLength = static_cast<size_t>(yStride) * frame->height;
-    const size_t uvLength = static_cast<size_t>(uvStride) * ((frame->height + 1) / 2);
+    const size_t yLength = static_cast<size_t>(yStride) * height;
+    const size_t uvLength = static_cast<size_t>(uvStride) * ((height + 1) / 2);
     uint8_t *dest[] = {data, data + yLength, data + yLength + uvLength, nullptr};
     int strides[] = {yStride, uvStride, uvStride, 0};
-    SwsContext *scaleContext = jniContext->yuvContext.Get(frame, AV_PIX_FMT_YUV420P);
-    result = scaleContext ? sws_scale(scaleContext, frame->data,
-            frame->linesize, 0, frame->height, dest, strides) : 0;
-    const bool success = result == frame->height;
+    const bool success = jniContext->yuvContext.Convert(frame, AV_PIX_FMT_YUV420P,
+            dest, strides, rotation_degrees);
     av_frame_free(&frame);
     return success ? VIDEO_DECODER_SUCCESS : VIDEO_DECODER_ERROR_OTHER;
 }

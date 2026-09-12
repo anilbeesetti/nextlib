@@ -37,7 +37,7 @@ final class FfmpegVideoDecoder extends
     private List<VideoDecoderOutputBuffer> outputBuffers;
     @Nullable
     private final byte[] extraData;
-    private Format format;
+    private final int rotationDegrees;
 
     @C.VideoOutputMode
     private volatile int outputMode;
@@ -61,7 +61,9 @@ final class FfmpegVideoDecoder extends
         assert format.sampleMimeType != null;
         codecName = Assertions.checkNotNull(FfmpegLibrary.getCodecName(format.sampleMimeType));
         extraData = getExtraData(format.sampleMimeType, format.initializationData);
-        this.format = format;
+        // Format uses clockwise degrees. Ignore unsupported non-right-angle rotations.
+        int rotation = format.rotationDegrees % 360;
+        rotationDegrees = rotation % 90 == 0 ? (rotation + 360) % 360 : 0;
         nativeContext = ffmpegInitialize(codecName, extraData, threads);
         if (nativeContext == 0) {
             throw new FfmpegDecoderException("Failed to initialize decoder.");
@@ -168,7 +170,8 @@ final class FfmpegVideoDecoder extends
         boolean decodeOnly = !isAtLeastOutputStartTimeUs(inputBuffer.timeUs);
         // We need to dequeue the decoded frame from the decoder even when the input data is
         // decode-only.
-        int getFrameResult = ffmpegReceiveFrame(nativeContext, outputMode, outputBuffer, decodeOnly);
+        int getFrameResult = ffmpegReceiveFrame(
+                nativeContext, outputMode, outputBuffer, decodeOnly, rotationDegrees);
         if (getFrameResult == VIDEO_DECODER_ERROR_OTHER) {
             return new FfmpegDecoderException("ffmpegDecode error: (see logcat)");
         }
@@ -214,7 +217,8 @@ final class FfmpegVideoDecoder extends
         }
         if (ffmpegRenderFrame(
                 nativeContext, surface,
-                outputBuffer, outputBuffer.width, outputBuffer.height) == VIDEO_DECODER_ERROR_OTHER) {
+                outputBuffer, outputBuffer.width, outputBuffer.height,
+                rotationDegrees) == VIDEO_DECODER_ERROR_OTHER) {
             throw new FfmpegDecoderException("Buffer render error: ");
         }
     }
@@ -230,7 +234,7 @@ final class FfmpegVideoDecoder extends
     private native int ffmpegRenderFrame(
             long context, Surface surface, VideoDecoderOutputBuffer outputBuffer,
             int displayedWidth,
-            int displayedHeight);
+            int displayedHeight, int rotationDegrees);
 
     /**
      * Decodes the encoded data passed.
@@ -254,6 +258,7 @@ final class FfmpegVideoDecoder extends
      * occurred.
      */
     private native int ffmpegReceiveFrame(
-            long context, int outputMode, VideoDecoderOutputBuffer outputBuffer, boolean decodeOnly);
+            long context, int outputMode, VideoDecoderOutputBuffer outputBuffer, boolean decodeOnly,
+            int rotationDegrees);
 
 }
