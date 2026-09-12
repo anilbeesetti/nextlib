@@ -17,7 +17,7 @@ class FfmpegVideoDecoderTest {
             sps + pps + pps,
             FfmpegVideoDecoder.getExtraData(MimeTypes.VIDEO_H264, listOf(sps, byteArrayOf(), pps, pps)),
         )
-        assertArrayEquals(byteArrayOf(), FfmpegVideoDecoder.getExtraData(MimeTypes.VIDEO_H264, listOf(byteArrayOf())))
+        assertNull(FfmpegVideoDecoder.getExtraData(MimeTypes.VIDEO_H264, listOf(byteArrayOf())))
     }
 
     @Test

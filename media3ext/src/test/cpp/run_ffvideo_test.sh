@@ -15,6 +15,7 @@ fi
     "$repo/media3ext/src/test/cpp/ffvideo_test.cpp" "$repo/media3ext/src/main/cpp/ffcommon.cpp" \
     -L"$repo/ffmpeg/output/lib/arm64-v8a" -lavcodec -lavutil -lswscale -lswresample \
     -landroid -lmediandk -llog -o "$build/ffvideo_test"
-adb shell mkdir -p /data/local/tmp/nextlib-ffvideo-test
-adb push "$repo/media3ext/src/test/cpp/fixtures/"*.ivf "$build/ffvideo_test" "$repo"/ffmpeg/output/lib/arm64-v8a/*.so /data/local/tmp/nextlib-ffvideo-test/ >/dev/null
-adb shell 'cd /data/local/tmp/nextlib-ffvideo-test && LD_LIBRARY_PATH=. ./ffvideo_test'
+remote=$(adb -s "$ANDROID_SERIAL" shell mktemp -d /data/local/tmp/nextlib-ffvideo.XXXXXX | tr -d '\r')
+trap 'adb -s "$ANDROID_SERIAL" shell rm -rf "$remote"; rm -rf "$build"' EXIT
+adb -s "$ANDROID_SERIAL" push "$repo/media3ext/src/test/cpp/fixtures/"*.ivf "$build/ffvideo_test" "$repo"/ffmpeg/output/lib/arm64-v8a/*.so "$remote/" >/dev/null
+adb -s "$ANDROID_SERIAL" shell "cd '$remote' && LD_LIBRARY_PATH=. ./ffvideo_test"
