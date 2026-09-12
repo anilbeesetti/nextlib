@@ -13,6 +13,7 @@ mavenPublish = "0.37.0"
 
 [libraries]
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
+androidx-test-runner = { group = "androidx.test", name = "runner", version = "1.7.0" }
 kotlin-annotations-jvm = { group = "org.jetbrains.kotlin", name = "kotlin-annotations-jvm", version.ref = "kotlin" }
 androidx-media3-exoplayer = { group = "androidx.media3", name = "media3-exoplayer", version.ref = "androidxMedia3" }
 checker-qual = { group = "org.checkerframework", name = "checker-qual", version.ref = "checkerQual" }

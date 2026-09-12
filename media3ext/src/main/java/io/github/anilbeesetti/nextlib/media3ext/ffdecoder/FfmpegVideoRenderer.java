@@ -8,7 +8,6 @@ import androidx.annotation.Nullable;
 import androidx.media3.common.C;
 import androidx.media3.common.Format;
 import androidx.media3.common.MimeTypes;
-import androidx.media3.common.util.Assertions;
 import androidx.media3.common.util.TraceUtil;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
@@ -107,17 +106,17 @@ public final class FfmpegVideoRenderer extends DecoderVideoRenderer {
     @Override
     @RendererCapabilities.Capabilities
     public final int supportsFormat(Format format) {
-        String mimeType = Assertions.checkNotNull(format.sampleMimeType);
+        String mimeType = format.sampleMimeType;
         if (!FfmpegLibrary.isAvailable() || !MimeTypes.isVideo(mimeType)) {
             return C.FORMAT_UNSUPPORTED_TYPE;
-        } else if (!FfmpegLibrary.supportsFormat(format.sampleMimeType)) {
+        } else if (!FfmpegLibrary.supportsFormat(mimeType)) {
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_SUBTYPE);
-        } else if (format.drmInitData != null) {
+        } else if (format.cryptoType != C.CRYPTO_TYPE_NONE) {
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_DRM);
         } else {
             return RendererCapabilities.create(
                     C.FORMAT_HANDLED,
-                    ADAPTIVE_SEAMLESS,
+                    ADAPTIVE_NOT_SEAMLESS,
                     TUNNELING_NOT_SUPPORTED);
         }
     }
@@ -126,12 +125,15 @@ public final class FfmpegVideoRenderer extends DecoderVideoRenderer {
     @Override
     protected void renderOutputBufferToSurface(VideoDecoderOutputBuffer outputBuffer, Surface surface)
             throws FfmpegDecoderException {
-        if (decoder == null) {
-            throw new FfmpegDecoderException(
-                    "Failed to render output buffer to surface: decoder is not initialized.");
+        try {
+            if (decoder == null) {
+                throw new FfmpegDecoderException(
+                        "Failed to render output buffer to surface: decoder is not initialized.");
+            }
+            decoder.renderToSurface(outputBuffer, surface);
+        } finally {
+            outputBuffer.release();
         }
-        decoder.renderToSurface(outputBuffer, surface);
-        outputBuffer.release();
     }
 
     @Override
