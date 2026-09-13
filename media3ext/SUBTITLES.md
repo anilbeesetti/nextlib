@@ -147,6 +147,20 @@ Validated build/check results:
 - NextPlayer debug APKs; 205 JVM tests, with `ignoreFailures` overridden to false;
   `ktlintCheck` passed.
 
+### Main merge and separate test app (2026-09-13)
+
+Merged main at `2dc77cd` (Media3 1.11.1). Built NextPlayer `70f77531`
+(0.18.0, version code 74) in an isolated copy with `nextplayer.patch`, then
+[`nextplayer-subs.patch`](src/test/subtitles/nextplayer-subs.patch). The debug app
+is named **Next player Subs**, package `dev.anilbeesetti.nextplayer.subs`, so it
+can be installed alongside the existing app.
+
+All 11 library JVM tests and [17 device tests](src/test/subtitles/verification/main-merge-instrumentation.txt)
+passed on an Android 16 ARM64 emulator, including main's decoder lifecycle test.
+NextPlayer's player formatting check and debug APK build passed. The ARM64 APK
+was installed and launched successfully on the connected CPH2689 phone; subtitle
+playback on that phone has not yet been checked.
+
 ## Limits
 
 - Media3 drops FFmpeg-muxed Matroska `D_WEBVTT/SUBTITLES` tracks before renderer
