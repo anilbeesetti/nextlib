@@ -71,6 +71,10 @@ player.setSubtitleViewportSize(width, height)
 
 Keep canvas output for ordinary cues. See the NextPlayer patch for selecting
 WebView only when a cue needs vertical layout, ruby or text emphasis.
+Lay out bitmap cues over the video surface using the same content scale, zoom
+and pan. A fullscreen overlay stretches authored coordinates when the video is
+letterboxed. The NextPlayer patch shares its video modifiers with bitmap output;
+ordinary text keeps the existing fullscreen subtitle layout.
 
 For external ASS/SSA, supply a normal `MediaItem.SubtitleConfiguration` with
 `MimeTypes.TEXT_SSA`. The helper merges a seekable raw-script source with the main
@@ -214,6 +218,30 @@ Screenshots: [SRT before](src/test/subtitles/verification/srt-offset.png),
 were also checked after switching from canvas output; the fixture cue was extended
 to the full clip for this visual check.
 
+### ASS placement on wide displays (2026-09-13)
+
+Reproduced the supplied episode's misplaced “Unemployed” label at 06:41.73 on a
+1600 × 720 Android 16 (API 36) ARM64 disposable emulator. The video occupied a
+centered 1280 × 720 area, while bitmap subtitles used all 1600 pixels of screen
+width. Sharing the video's layout and transform places the label beside the
+Japanese lettering and also corrects the name and incident labels.
+
+The generated `alignment.mkv` has a cyan outline in its video around the ASS red
+rectangle's authored position. Pause between 1 and 7 seconds with both rectangles
+fully visible, capture the screen, then run:
+
+```sh
+python3 media3ext/src/test/subtitles/generate_fixtures.py /tmp/subtitle-fixtures
+python3 media3ext/src/test/subtitles/check_bitmap_alignment.py /path/to/screenshot.png
+```
+
+The check fails on the [previous APK](src/test/subtitles/verification/bitmap-offset.png)
+and passes with the fix in [fit mode](src/test/subtitles/verification/bitmap-aligned.png),
+stretch, crop and original-size modes. SRT remains centered at 799 px on a 1600 px
+viewport. All 18 player unit tests, player `ktlintCheck` and the debug APK build
+passed. Pinch zoom and pan share the same modifiers but were not exercised in
+this run. The user's episode and screenshots remain outside the repository.
+
 ## Limits
 
 - Media3 drops FFmpeg-muxed Matroska `D_WEBVTT/SUBTITLES` tracks before renderer
@@ -235,8 +263,8 @@ to the full clip for this visual check.
   file must embed its fonts or have them supplied by the application.
 - ASS bitmap styling is authored by the script; `SubtitleView` text font/size and
   embedded-style toggles cannot restyle rasterized ASS. Delay and speed still work.
-  Cue coordinates use the subtitle overlay's bounds; alignment to video letterbox,
-  crop and zoom modes needs the application's matching overlay layout.
+  Applications must match the bitmap overlay to their video layout, as shown in
+  the NextPlayer patch.
 - Raw external ASS uses a single-period merged source. Multi-period manifests,
   server-side ads, DRM subtitles, live ASS pruning and standalone `.sup`/`.idx`
   extraction are outside the verified scope. ASS scripts and samples are limited

@@ -50,7 +50,25 @@
  import androidx.media3.common.util.UnstableApi
  import androidx.media3.ui.CaptionStyleCompat
  import androidx.media3.ui.SubtitleView
-@@ -55,6 +59,14 @@
+@@ -22,6 +26,7 @@
+ @Composable
+ fun SubtitleView(
+     modifier: Modifier = Modifier,
++    bitmapModifier: Modifier = modifier,
+     player: Player,
+     isInPictureInPictureMode: Boolean,
+     configuration: SubtitleConfiguration,
+@@ -29,7 +34,8 @@
+     val cuesState = rememberCuesState(player)
+
+     AndroidView(
+-        modifier = modifier.fillMaxSize(),
++        // Bitmap cues use video coordinates; ordinary text keeps the screen overlay.
++        modifier = (if (cuesState.cues.any { it.bitmap != null }) bitmapModifier else modifier).fillMaxSize(),
+         factory = { context ->
+             SubtitleView(context).apply {
+                 val captioningManager = getSystemService(context, CaptioningManager::class.java) ?: return@apply
+@@ -55,6 +61,14 @@
              }
          },
          update = { subtitleView ->
@@ -65,3 +83,64 @@
              subtitleView.setCues(cuesState.cues)
              if (isInPictureInPictureMode) {
                  subtitleView.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION)
+--- a/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/PlayerContentFrame.kt
++++ b/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/PlayerContentFrame.kt
+@@ -40,19 +40,26 @@
+     subtitleConfiguration: SubtitleConfiguration,
+ ) {
+     val presentationState = rememberPresentationState(player)
++    val videoSizeModifier = modifier
++        .resizeWithContentScale(
++            contentScale = videoZoomAndContentScaleState.videoContentScale.toContentScale(),
++            sourceSizeDp = presentationState.videoSizeDp?.let { size ->
++                size.copy(
++                    width = with(LocalDensity.current) { size.width.toDp().value },
++                    height = with(LocalDensity.current) { size.height.toDp().value },
++                )
++            },
++        )
++    val videoTransform = Modifier.graphicsLayer {
++        scaleX = videoZoomAndContentScaleState.zoom
++        scaleY = videoZoomAndContentScaleState.zoom
++        translationX = videoZoomAndContentScaleState.offset.x
++        translationY = videoZoomAndContentScaleState.offset.y
++    }
+     PlayerSurface(
+         player = player,
+         surfaceType = SURFACE_TYPE_SURFACE_VIEW,
+-        modifier = modifier
+-            .resizeWithContentScale(
+-                contentScale = videoZoomAndContentScaleState.videoContentScale.toContentScale(),
+-                sourceSizeDp = presentationState.videoSizeDp?.let { size ->
+-                    size.copy(
+-                        width = with(LocalDensity.current) { size.width.toDp().value },
+-                        height = with(LocalDensity.current) { size.height.toDp().value },
+-                    )
+-                },
+-            )
++        modifier = videoSizeModifier
+             .onGloballyPositioned {
+                 val bounds = it.boundsInWindow()
+                 val rect = Rect(
+@@ -63,12 +70,7 @@
+                 )
+                 pictureInPictureState.setVideoViewRect(rect)
+             }
+-            .graphicsLayer {
+-                scaleX = videoZoomAndContentScaleState.zoom
+-                scaleY = videoZoomAndContentScaleState.zoom
+-                translationX = videoZoomAndContentScaleState.offset.x
+-                translationY = videoZoomAndContentScaleState.offset.y
+-            },
++            .then(videoTransform),
+     )
+
+     PlayerGestures(
+@@ -81,6 +83,7 @@
+     )
+
+     SubtitleView(
++        bitmapModifier = videoSizeModifier.then(videoTransform),
+         player = player,
+         isInPictureInPictureMode = pictureInPictureState.isInPictureInPictureMode,
+         configuration = subtitleConfiguration,

@@ -113,6 +113,11 @@ ffmpeg('-f', 'lavfi', '-i', 'color=c=0x182536:s=640x360:r=24:d=24', '-f', 'lavfi
 for file, codec in [('styled.ass', 'copy'), ('legacy.ssa', 'ass'), ('basic.srt', 'copy'), ('styled.vtt', 'copy'), ('bitmap.sup', 'copy')]:
     ffmpeg('-i', out / 'video.mp4', '-i', out / file, '-map', '0', '-map', '1:0', '-c', 'copy', '-c:s', codec,
            '-metadata:s:s:0', 'language=eng', '-disposition:s:0', 'default', out / (file + '.mkv'))
+# A cyan video outline surrounds the ASS red rectangle when both use the same viewport.
+ffmpeg('-i', out / 'video.mp4', '-i', out / 'styled.ass', '-map', '0', '-map', '1:0',
+       '-vf', 'drawbox=x=49:y=99:w=82:h=22:color=cyan:t=2', '-c:v', 'libx264', '-preset', 'ultrafast',
+       '-crf', '18', '-c:a', 'copy', '-c:s', 'copy', '-metadata:s:s:0', 'language=eng',
+       '-disposition:s:0', 'default', out / 'alignment.mkv')
 font_assets = pathlib.Path(__file__).parents[2] / 'androidTest/assets/subtitles'
 for name in ['font.ass', 'font-embedded.ass', 'shapes.ttf']:
     (out / name).write_bytes((font_assets / name).read_bytes())
