@@ -87,9 +87,11 @@ application-owned error handling.
 ## Building from source
 
 Use macOS or Linux (WSL on Windows), JDK 17+, `make`, `curl`, `tar`, and
-`pkg-config`, Meson, Ninja, and NASM 2.14+ (`brew install meson ninja nasm` on
-macOS; `sudo apt-get install meson ninja-build nasm` on Ubuntu). NASM is used for
-both FFmpeg and dav1d's x86 assembly. Install [Android CLI](https://developer.android.com/tools/agents/android-cli/download)
+`pkg-config`, Python 3, Meson 1.6+, Ninja, gperf, and NASM 2.14+
+(`brew install meson ninja nasm gperf` on macOS). On Ubuntu, install
+`ninja-build nasm gperf python3-venv`, then install Meson in a virtual environment
+and add that environment's `bin` directory to PATH; CI pins Meson 1.12.0.
+NASM supplies x86 assembly for FFmpeg, dav1d and libass. Install [Android CLI](https://developer.android.com/tools/agents/android-cli/download)
 and put `android` on PATH, or set `ANDROID_CLI` to its executable path.
 Set `sdk.dir` in `local.properties` or export `ANDROID_HOME` to your Android SDK.
 
@@ -109,6 +111,13 @@ HTTPS/TLS support. The build statically links dav1d into FFmpeg's `libavcodec.so
 for every ABI, with assembly optimizations and both 8-bit and high-bit-depth AV1
 support. AV1 uses the `libdav1d` decoder in Media3 and in media-info/thumbnail lookups.
 
+Subtitle rendering builds upstream libass 0.17.5 directly as `libass.so` for each
+ABI. FreeType 2.14.1, FriBidi 1.0.16, HarfBuzz 14.4.0, Fontconfig 2.16.0,
+Expat 2.8.4 and libunibreak 7.0 are linked statically into it. The build installs
+headers and pkg-config metadata under `ffmpeg/build/external/<abi>` and publishes
+libass headers/binaries under `ffmpeg/output`. Dependency license notices are
+packaged in the media3ext AAR's `assets/native-dependencies` directory.
+
 Gradle tracks the setup script, tool versions, and generated output so unchanged
 builds skip FFmpeg. To force rebuilding it:
 
@@ -119,6 +128,8 @@ builds skip FFmpeg. To force rebuilding it:
 For standalone use, export `ANDROID_HOME` and run `bash ffmpeg/setup.sh` (always
 rebuilds). Run `python3 ffmpeg/test_setup.py` for setup regression checks without
 SDK downloads or native compilation.
+After `assembleRelease`, run `python3 ffmpeg/test_native_package.py` with
+`ANDROID_HOME` set to check the AARs' native dependencies, exports and 16 KiB alignment.
 
 To verify AV1 decoding and seeking on a disposable ARM64 Android emulator, build
 the library and run the native regression test (requires host FFmpeg with the

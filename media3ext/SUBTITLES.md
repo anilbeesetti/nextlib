@@ -24,7 +24,7 @@ user's typeface.
 `FfmpegSubtitleExtractorsFactory` extends Media3's existing Matroska parsing with
 [font attachment elements](https://www.matroska.org/technical/elements.html#Attachments).
 It passes TTF, OTF and TTC data through format metadata to
-[`ass_add_font`](https://github.com/libass/libass/blob/0.17.3/libass/ass.h), scoped to
+[`ass_add_font`](https://github.com/libass/libass/blob/0.17.5/libass/ass.h), scoped to
 one decoder. Fonts are deliberately excluded from codec initialization bytes:
 MediaSession serializes those bytes in track bundles, which would exceed Binder's
 transaction limit with ordinary font collections. ASS `[Fonts]` sections are also
@@ -36,11 +36,17 @@ the deprecated legacy path caused paused-seek regressions for ordinary text form
 in testing, so it is deliberately avoided. See
 [DefaultMediaSourceFactory](https://github.com/androidx/media/blob/release/libraries/exoplayer/src/main/java/androidx/media3/exoplayer/source/DefaultMediaSourceFactory.java).
 
-The build reuses the [libass Android prefab](https://github.com/peerless2012/libass-android)
-`io.github.peerless2012:ass:0.5.1` (libass 1.17.3), instead of introducing another
-cross-compilation toolchain. Its AAR supplies libass and the shared C++ runtime;
-nextlib excludes duplicate copies from its own AAR. FFmpeg's existing build enables
-`pgssub`, `dvdsub` and `dvbsub` for all four ABIs.
+The native setup builds [upstream libass 0.17.5](https://github.com/libass/libass/releases/tag/0.17.5)
+directly. Its official Autotools release build supplies Android's unversioned
+`libass.so` and the public-symbol export list. FreeType 2.14.1, FriBidi 1.0.16,
+HarfBuzz 14.4.0, Fontconfig 2.16.0, Expat 2.8.4 and libunibreak 7.0 are linked
+statically into that library. This preserves shaping, system-font discovery and
+Unicode line wrapping without another Maven or Prefab dependency. The existing
+NDK, Meson, CMake and FFmpeg setup produces all four ABIs with 16 KiB page
+alignment and packages dependency license notices. FFmpeg enables `pgssub`,
+`dvdsub` and `dvbsub` for the bitmap subtitle formats.
+The JNI library uses the project's static C++ runtime, avoiding a separate runtime
+binary whose page alignment depends on the NDK release.
 
 ## Integration
 
@@ -241,6 +247,27 @@ stretch, crop and original-size modes. SRT remains centered at 799 px on a 1600 
 viewport. All 18 player unit tests, player `ktlintCheck` and the debug APK build
 passed. Pinch zoom and pan share the same modifiers but were not exercised in
 this run. The user's episode and screenshots remain outside the repository.
+
+### Direct native build (2026-09-13)
+
+Built all four ABIs from upstream sources on macOS, including both release AARs
+and the NextPlayer test APK. The 11 library JVM tests passed. All 19 device tests
+passed on disposable ARM64 emulators running [Android 16 / API 36](src/test/subtitles/verification/native-libass-instrumentation.txt)
+and [Android 17 / API 37 with 16 KiB pages](src/test/subtitles/verification/native-libass-16k-instrumentation.txt).
+This includes the 13-case subtitle playback matrix, attached and embedded fonts,
+seeking, track re-selection and the native video regression tests.
+
+NextPlayer's authored Dominican opening font and the supplied episode's 06:41
+labels were visually checked on the 16 KiB emulator. The bitmap alignment check
+passes, and SRT is centered at 800 px on the 1600 px display. The player formatting
+check and APK build pass. Both emulators were disposed after testing; the supplied
+episode and its screenshots are excluded from the repository.
+
+`python3 ffmpeg/test_native_package.py` checks the built AARs for all four ABIs,
+16 KiB ELF alignment, packaged native dependencies, public libass exports and
+license notices. It also caught a missing `libswresample.so` dependency in the
+standalone mediainfo AAR; that library is now packaged. CI runs this check before
+publishing. The build's Gradle up-to-date check was also verified.
 
 ## Limits
 

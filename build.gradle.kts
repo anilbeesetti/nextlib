@@ -6,7 +6,7 @@ plugins {
 // One shared producer for both modules, including parallel Gradle builds.
 val ffmpegSetup = tasks.register<Exec>("ffmpegSetup") {
     group = "build"
-    description = "Build FFmpeg and its dependencies for all Android ABIs"
+    description = "Build native media libraries for all Android ABIs"
     workingDir = file("ffmpeg")
     val sdkDirectory = providers.fileContents(layout.projectDirectory.file("local.properties"))
         .asText.orElse("").map { contents ->

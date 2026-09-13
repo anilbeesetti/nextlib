@@ -18,8 +18,16 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     ffmpeg = root / 'ffmpeg'
     ffmpeg.mkdir()
     shutil.copy(Path(__file__).with_name('setup.sh'), ffmpeg)
-    for name in ('mbedtls-3.6.7', 'ffmpeg-9.0.1', 'dav1d-1.5.4'):
+    for name in ('mbedtls-3.6.7', 'ffmpeg-9.0.1', 'dav1d-1.5.4', 'libass-0.17.5',
+                 'freetype-2.14.1', 'fribidi-1.0.16', 'harfbuzz-14.4.0',
+                 'fontconfig-2.16.0', 'expat-2.8.4', 'libunibreak-7.0'):
         (ffmpeg / 'sources' / name).mkdir(parents=True)
+    for entry in ('libass-0.17.5/COPYING', 'freetype-2.14.1/docs/FTL.TXT',
+                  'fribidi-1.0.16/COPYING', 'harfbuzz-14.4.0/COPYING',
+                  'fontconfig-2.16.0/COPYING', 'expat-2.8.4/COPYING', 'libunibreak-7.0/LICENCE'):
+        license = ffmpeg / 'sources' / entry
+        license.parent.mkdir(parents=True, exist_ok=True)
+        license.write_text(entry)
     # Partial previous builds must not suppress a retry.
     (ffmpeg / 'build').mkdir()
     (ffmpeg / 'output').mkdir()
@@ -31,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     log = root / 'cli.log'
     executable(cli, 'printf "%s\\n" "$@" > "$CLI_LOG"\nexit 19\n')
     executable(root / 'bin/pkg-config', 'exit 0\n')
-    for tool in ('meson', 'ninja', 'nasm'):
+    for tool in ('meson', 'ninja', 'nasm', 'gperf'):
         executable(root / 'bin' / tool, 'exit 0\n')
     env = dict(os.environ, PATH=str(root / 'bin') + os.pathsep + os.environ['PATH'], ANDROID_HOME=str(sdk), ANDROID_CLI=str(cli),
                ANDROID_NDK_VERSION='test-ndk', ANDROID_CMAKE_VERSION='test-cmake',
@@ -89,6 +97,17 @@ touch "$prefix/lib/libavcodec.so" "$prefix/include/avcodec.h"
 printf '%s\\n' "$@" > "$prefix/configure.args"
 printf '%s\\n' "$PKG_CONFIG_PATH" "$PKG_CONFIG_LIBDIR" > "$prefix/pkgconfig.env"
 ''')
+    for name in ('libass-0.17.5', 'libunibreak-7.0'):
+        executable(ffmpeg / 'sources' / name / 'configure', """
+for arg in "$@"; do
+  case "$arg" in --prefix=*) prefix=${arg#--prefix=} ;; esac
+done
+mkdir -p "$prefix/lib" "$prefix/include/ass"
+touch "$prefix/lib/libass.so" "$prefix/include/ass/ass.h"
+printf '%s\\n' "$@" > configure.args
+printf '%s\\n' "$PKG_CONFIG_PATH" "$PKG_CONFIG_LIBDIR" > pkgconfig.env
+printf '%s\\n' "$PKG_CONFIG" "$CFLAGS" "$LDFLAGS" > toolchain.env
+""")
     env['PKG_CONFIG_PATH'] = '/host/libraries/must/not/be/used'
     result = run()
     assert result.returncode == 0, result
@@ -117,6 +136,24 @@ printf '%s\\n' "$PKG_CONFIG_PATH" "$PKG_CONFIG_LIBDIR" > "$prefix/pkgconfig.env"
             assert '--cpu=x86-64' in args
         assert (ffmpeg / f'build/{abi}/pkgconfig.env').read_text().splitlines() == [
             '', str(ffmpeg / f'build/external/{abi}/lib/pkgconfig')]
+        # The shared libass build must retain font discovery and Unicode wrapping.
+        args = (ffmpeg / f'build/libass/{abi}/configure.args').read_text().splitlines()
+        for option in ('--enable-shared', '--disable-static', '--enable-fontconfig', '--enable-libunibreak'):
+            assert option in args, (abi, option)
+        assert (ffmpeg / f'build/libass/{abi}/pkgconfig.env').read_text().splitlines() == [
+            '', str(ffmpeg / f'build/external/{abi}/lib/pkgconfig')]
+        toolchain_env = (ffmpeg / f'build/libass/{abi}/toolchain.env').read_text()
+        assert '--static' in toolchain_env and '-fPIC' in toolchain_env
+        assert '-Wl,-z,max-page-size=16384' in toolchain_env
+        assert (ffmpeg / f'output/lib/{abi}/libass.so').is_file()
+        assert (ffmpeg / f'output/include/{abi}/ass/ass.h').is_file()
+        for dependency in ('freetype', 'fribidi', 'harfbuzz', 'fontconfig'):
+            args = (ffmpeg / f'build/{dependency}/{abi}.args').read_text().splitlines()
+            assert '--default-library=static' in args and '-Db_staticpic=true' in args
+            assert '--wrap-mode=nodownload' in args and '-Dprefer_static=true' in args
+    assert len([f for f in (ffmpeg / 'output/licenses').rglob('*') if f.is_file()]) == 7
+    executable(ffmpeg / 'sources/libass-0.17.5/configure', 'exit 44\n')
+    assert run().returncode == 44, 'libass configure failures must stop the build'
     executable(root / 'bin/ninja', 'exit 43\n')
     assert run().returncode == 43, 'dav1d build failures must stop the build'
 

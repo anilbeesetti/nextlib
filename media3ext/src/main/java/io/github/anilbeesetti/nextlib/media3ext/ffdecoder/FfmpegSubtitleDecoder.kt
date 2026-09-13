@@ -50,7 +50,7 @@ internal class FfmpegSubtitleDecoder(context: Context, format: Format, fontsDire
 
     fun decode(data: ByteBuffer, timeUs: Long, subsampleOffsetUs: Long): Boolean {
         var sample = data.slice()
-        // The libass Android build has no iconv. Normalize BOM-marked UTF-16 using the platform.
+        // Normalize BOM-marked UTF-16 using the platform before passing it to native libass.
         if (ass && sample.remaining() >= 2 &&
             ((sample[0] == 0xff.toByte() && sample[1] == 0xfe.toByte()) ||
                 (sample[0] == 0xfe.toByte() && sample[1] == 0xff.toByte()))) {

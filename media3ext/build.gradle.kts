@@ -10,8 +10,6 @@ android {
     compileSdk = libs.versions.androidCompileSdk.get().toInt()
     ndkVersion = libs.versions.ndk.get()
 
-    buildFeatures { prefab = true }
-
     defaultConfig {
 
         minSdk = 23
@@ -20,7 +18,6 @@ android {
         externalNativeBuild {
             cmake {
                 cppFlags("")
-                arguments("-DANDROID_STL=c++_shared")
             }
         }
 
@@ -50,9 +47,7 @@ android {
 
 androidComponents {
     onVariants { variant ->
-        // The prefab dependency already ships these in its AAR; don't publish a second copy.
-        variant.packaging.jniLibs.excludes.addAll("**/libass.so", "**/libc++_shared.so")
-        variant.androidTest?.packaging?.jniLibs?.pickFirsts?.addAll("**/libass.so", "**/libc++_shared.so")
+        variant.sources.assets?.addStaticSourceDirectory(rootProject.file("ffmpeg/output/licenses").absolutePath)
         variant.androidTest?.sources?.assets?.addStaticSourceDirectory("src/test/cpp/fixtures")
     }
 }
@@ -64,7 +59,6 @@ tasks.configureEach {
 }
 
 dependencies {
-    implementation(libs.libass.android)
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.google.errorprone.annotations)
     implementation(libs.androidx.annotation)

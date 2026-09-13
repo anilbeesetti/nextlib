@@ -3,7 +3,6 @@ androidCompileSdk = "36"
 agp = "9.4.0"
 kotlin = "2.4.20"
 androidxMedia3 = "1.11.1"
-libassAndroid = "0.5.1"
 junit = "4.13.2"
 checkerQual = "4.2.3"
 googleErrorProne = "2.50.0"
@@ -13,7 +12,6 @@ ndk = "25.2.9519653"
 mavenPublish = "0.37.0"
 
 [libraries]
-libass-android = { group = "io.github.peerless2012", name = "ass", version.ref = "libassAndroid" }
 androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
 androidx-test-runner = { group = "androidx.test", name = "runner", version = "1.7.0" }
 kotlin-annotations-jvm = { group = "org.jetbrains.kotlin", name = "kotlin-annotations-jvm", version.ref = "kotlin" }

@@ -9,7 +9,6 @@ cmake_minimum_required(VERSION 3.22.1)
 
 project("media3ext")
 set(CMAKE_CXX_STANDARD 17)
-find_package(lib_ass REQUIRED CONFIG)
 
 set(ffmpeg_dir ${CMAKE_SOURCE_DIR}/../../../../ffmpeg/output)
 set(ffmpeg_libs ${ffmpeg_dir}/lib/${ANDROID_ABI})
@@ -20,7 +19,7 @@ set(
         # List variable name
         ffmpeg_libs_names
         # Values in the list
-        avutil avcodec swresample swscale)
+        avutil avcodec swresample swscale ass)
 
 foreach (ffmpeg_lib_name ${ffmpeg_libs_names})
     add_library(
@@ -50,5 +49,4 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         android
         jnigraphics
         z
-        lib_ass::ass
         ${ffmpeg_libs_names})
