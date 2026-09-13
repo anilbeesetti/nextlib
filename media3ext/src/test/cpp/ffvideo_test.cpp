@@ -3,6 +3,7 @@
 #include <media/NdkImageReader.h>
 #include <cassert>
 #include <cstdio>
+#include <vector>
 extern "C" {
 #include <libavcodec/avcodec.h>
 }
@@ -354,7 +355,63 @@ static void CheckPacketErrorOrigins() {
     puts("PASS: invalid input retains its send error classification");
 }
 
+static bool copyException;
+static JNINativeInterface functions{};
+static JNIEnv env{&functions};
+
+static std::unique_ptr<JniContext> Initialize(const char *name, std::vector<uint8_t> *extra,
+                                            int width, int height) {
+    return std::unique_ptr<JniContext>(reinterpret_cast<JniContext *>(
+            Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegInitialize(
+                    &env, nullptr, reinterpret_cast<jstring>(const_cast<char *>(name)),
+                    reinterpret_cast<jbyteArray>(extra), 1, width, height)));
+}
+
+static void CheckInitialization() {
+    functions.GetStringUTFChars = [](JNIEnv *, jstring name, jboolean *) { return reinterpret_cast<const char *>(name); };
+    functions.ReleaseStringUTFChars = [](JNIEnv *, jstring, const char *) {};
+    functions.GetArrayLength = [](JNIEnv *, jarray data) -> jsize { return reinterpret_cast<std::vector<uint8_t> *>(data)->size(); };
+    functions.GetByteArrayRegion = [](JNIEnv *, jbyteArray data, jsize start, jsize size, jbyte *output) {
+        if (copyException) return;
+        auto *bytes = reinterpret_cast<std::vector<uint8_t> *>(data);
+        if (size) memcpy(output, bytes->data() + start, size);
+    };
+    functions.FindClass = [](JNIEnv *, const char *) { return reinterpret_cast<jclass>(1); };
+    functions.GetFieldID = [](JNIEnv *, jclass, const char *, const char *) { return reinterpret_cast<jfieldID>(1); };
+    functions.GetMethodID = [](JNIEnv *, jclass, const char *, const char *) { return reinterpret_cast<jmethodID>(1); };
+    functions.ExceptionCheck = [](JNIEnv *) -> jboolean { return copyException; };
+
+    assert(!Initialize("nextlib_missing_decoder", nullptr, 320, 180));
+    for (const char *name : {"h264", "hevc"}) {
+        auto context = Initialize(name, nullptr, 320, 180);
+        assert(context && context->codecContext->width == 320 && context->codecContext->height == 180);
+        context = Initialize(name, nullptr, -1, -1);
+        assert(context && !context->codecContext->width && !context->codecContext->height);
+        context = Initialize(name, nullptr, 0, -10);
+        assert(context && !context->codecContext->width && !context->codecContext->height);
+        // Invalid extreme dimensions must be rejected or cleared by libavcodec, never allocated.
+        context = Initialize(name, nullptr, INT_MAX, INT_MAX);
+        assert(!context || (!context->codecContext->width && !context->codecContext->height));
+    }
+    std::vector<uint8_t> empty;
+    assert(Initialize("h264", &empty, 0, 0));
+    std::vector<uint8_t> truncated{0, 0, 1, 0x67};
+    auto context = Initialize("h264", &truncated, 320, 180);
+    if (context) {
+        assert(context->codecContext->extradata_size == truncated.size());
+        assert(!memcmp(context->codecContext->extradata, truncated.data(), truncated.size()));
+        for (int i = 0; i < AV_INPUT_BUFFER_PADDING_SIZE; i++) {
+            assert(context->codecContext->extradata[truncated.size() + i] == 0);
+        }
+    }
+    copyException = true;
+    assert(!Initialize("h264", &truncated, 320, 180));
+    copyException = false;
+    puts("PASS: JNI discovery, known/unknown/extreme dimensions, empty/truncated extradata, padding and JNI copy failure");
+}
+
 int main() {
+    CheckInitialization();
     CheckPacketErrorOrigins();
     CheckVp9PacketBackpressure("vp9.ivf", 24, 64, 48);
     int emptyReceivesBefore = emptyReceivesAfterBlockedSend;

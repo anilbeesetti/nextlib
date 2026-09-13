@@ -55,20 +55,30 @@ final class FfmpegVideoDecoder extends
     public FfmpegVideoDecoder(int numInputBuffers, int numOutputBuffers, int initialInputBufferSize, int threads, Format format) throws FfmpegDecoderException {
         super(new DecoderInputBuffer[numInputBuffers], new VideoDecoderOutputBuffer[numOutputBuffers]);
 
-        if (!FfmpegLibrary.isAvailable()) {
-            throw new FfmpegDecoderException("Failed to load decoder native library.");
+        try {
+            if (!FfmpegLibrary.isAvailable()) {
+                throw new FfmpegDecoderException("Failed to load decoder native library.");
+            }
+            assert format.sampleMimeType != null;
+            codecName = Assertions.checkNotNull(FfmpegLibrary.getCodecName(format.sampleMimeType));
+            extraData = getExtraData(format.sampleMimeType, format.initializationData);
+            // Format uses clockwise degrees. Ignore unsupported non-right-angle rotations.
+            int rotation = format.rotationDegrees % 360;
+            rotationDegrees = rotation % 90 == 0 ? (rotation + 360) % 360 : 0;
+            nativeContext = ffmpegInitialize(codecName, extraData, threads, format.width, format.height);
+            if (nativeContext == 0) {
+                throw new FfmpegDecoderException("Failed to initialize decoder.");
+            }
+            setInitialInputBufferSize(initialInputBufferSize);
+        } catch (Throwable error) {
+            // SimpleDecoder starts its thread in super(), before initialization can fail.
+            super.release();
+            if (nativeContext != 0) {
+                ffmpegRelease(nativeContext);
+                nativeContext = 0;
+            }
+            throw error;
         }
-        assert format.sampleMimeType != null;
-        codecName = Assertions.checkNotNull(FfmpegLibrary.getCodecName(format.sampleMimeType));
-        extraData = getExtraData(format.sampleMimeType, format.initializationData);
-        // Format uses clockwise degrees. Ignore unsupported non-right-angle rotations.
-        int rotation = format.rotationDegrees % 360;
-        rotationDegrees = rotation % 90 == 0 ? (rotation + 360) % 360 : 0;
-        nativeContext = ffmpegInitialize(codecName, extraData, threads);
-        if (nativeContext == 0) {
-            throw new FfmpegDecoderException("Failed to initialize decoder.");
-        }
-        setInitialInputBufferSize(initialInputBufferSize);
     }
 
     /**
@@ -76,22 +86,38 @@ final class FfmpegVideoDecoder extends
      * not required.
      */
     @Nullable
-    private static byte[] getExtraData(String mimeType, List<byte[]> initializationData) {
+    /* package */ static byte[] getExtraData(String mimeType, List<byte[]> initializationData)
+            throws FfmpegDecoderException {
         if (initializationData.isEmpty()) return null;
         switch (mimeType) {
-            case MimeTypes.VIDEO_H264 -> {
-                byte[] sps = initializationData.get(0);
-                byte[] pps = initializationData.get(1);
-                byte[] extraData = new byte[sps.length + pps.length];
-                System.arraycopy(sps, 0, extraData, 0, sps.length);
-                System.arraycopy(pps, 0, extraData, sps.length, pps.length);
+            case MimeTypes.VIDEO_H264, MimeTypes.VIDEO_H265,
+                    MimeTypes.VIDEO_MPEG, MimeTypes.VIDEO_MPEG2 -> {
+                // Media3 supplies start-code-prefixed NAL units or MPEG sequence headers.
+                int size = 0;
+                for (byte[] data : initializationData) {
+                    if (data == null || data.length > Integer.MAX_VALUE - size) {
+                        throw new FfmpegDecoderException("Invalid video initialization data.");
+                    }
+                    size += data.length;
+                }
+                if (size == 0) return null;
+                byte[] extraData = new byte[size];
+                int offset = 0;
+                for (byte[] data : initializationData) {
+                    System.arraycopy(data, 0, extraData, offset, data.length);
+                    offset += data.length;
+                }
                 return extraData;
             }
-            case MimeTypes.VIDEO_H265 -> {
+            case MimeTypes.VIDEO_AV1 -> {
+                // libdav1d accepts Media3's single av1C record, including its four-byte header.
+                if (initializationData.size() != 1 || initializationData.get(0) == null) {
+                    throw new FfmpegDecoderException("Invalid AV1 initialization data.");
+                }
                 return initializationData.get(0);
             }
             default -> {
-                // Other codecs do not require extra data.
+                // VP8/VP9 do not need extradata; their container metadata is not a byte stream.
                 return null;
             }
         }
@@ -223,7 +249,8 @@ final class FfmpegVideoDecoder extends
         }
     }
 
-    private native long ffmpegInitialize(String codecName, @Nullable byte[] extraData, int threads);
+    private native long ffmpegInitialize(String codecName, @Nullable byte[] extraData, int threads,
+                                         int width, int height);
 
     private native long ffmpegReset(long context);
 

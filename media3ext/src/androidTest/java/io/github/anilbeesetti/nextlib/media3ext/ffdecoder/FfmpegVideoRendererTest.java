@@ -21,6 +21,8 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import java.io.DataInputStream;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
+import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
 
@@ -31,6 +33,45 @@ public class FfmpegVideoRendererTest {
 
     private static FfmpegVideoRenderer renderer() {
         return new FfmpegVideoRenderer(0, null, null, 0, 1, 1, 1);
+    }
+
+    @Test
+    public void failedInitializationDoesNotLeaveDecoderThreads() {
+        Set<Thread> before = Thread.getAllStackTraces().keySet();
+        for (Format format : new Format[] {new Format.Builder().build(),
+                VP9.buildUpon().setSampleMimeType("video/unsupported").build(),
+                VP9.buildUpon().setSampleMimeType(MimeTypes.VIDEO_AV1)
+                        .setInitializationData(List.of(new byte[] {1}, new byte[] {2})).build()}) {
+            assertThrows(Throwable.class, () -> new FfmpegVideoDecoder(1, 1, 1024, 1, format));
+        }
+        // A negative allocation fails after the native decoder has been opened.
+        assertThrows(RuntimeException.class,
+                () -> new FfmpegVideoDecoder(1, 1, Integer.MIN_VALUE, 1, VP9));
+        for (Thread thread : Thread.getAllStackTraces().keySet()) {
+            assertFalse("Leaked decoder thread after constructor failure",
+                    !before.contains(thread) && thread.isAlive()
+                            && thread.getName().equals("ExoPlayer:SimpleDecoder"));
+        }
+    }
+
+    @Test
+    public void bitstreamDimensionsOverrideContainerHintsAcrossFlush() throws Exception {
+        for (int[] dimensions : new int[][] {{64, 48}, {-1, -1}, {320, 180}}) {
+            Format format = VP9.buildUpon().setWidth(dimensions[0]).setHeight(dimensions[1]).build();
+            FfmpegVideoDecoder decoder = new FfmpegVideoDecoder(1, 1, 1024, 1, format);
+            decoder.setOutputMode(C.VIDEO_OUTPUT_MODE_YUV);
+            try {
+                for (int pass = 0; pass < 4; pass++) {
+                    decoder.flush();
+                    VideoDecoderOutputBuffer output = decodeKeyFrame(decoder, format, pass * 1000L);
+                    assertEquals(64, output.width);
+                    assertEquals(48, output.height);
+                    output.release();
+                }
+            } finally {
+                decoder.release();
+            }
+        }
     }
 
     @Test
