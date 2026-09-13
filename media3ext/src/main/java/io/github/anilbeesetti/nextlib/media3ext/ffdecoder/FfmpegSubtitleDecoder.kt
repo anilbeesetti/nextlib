@@ -7,6 +7,7 @@ import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.text.Cue
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.extractor.metadata.id3.BinaryFrame
 import java.io.File
 import java.nio.ByteBuffer
 
@@ -35,6 +36,11 @@ internal class FfmpegSubtitleDecoder(context: Context, format: Format, fontsDire
                 if (ass) "ass" else checkNotNull(FfmpegLibrary.getCodecName(format.sampleMimeType!!)),
                 header ?: byteArrayOf(),
                 fontConfig?.absolutePath,
+                if (ass) format.metadata?.let { metadata ->
+                    (0 until metadata.length()).mapNotNull { i ->
+                        (metadata[i] as? BinaryFrame)?.takeIf { it.id == MATROSKA_FONT_ID }?.data
+                    }.toTypedArray()
+                } ?: emptyArray() else emptyArray(),
             )
             check(handle != 0L) { "Unable to initialize ${format.sampleMimeType} subtitles" }
         } finally {
@@ -75,7 +81,7 @@ internal class FfmpegSubtitleDecoder(context: Context, format: Format, fontsDire
         handle = 0
     }
 
-    private external fun nativeCreate(codec: String, header: ByteArray, fontConfig: String?): Long
+    private external fun nativeCreate(codec: String, header: ByteArray, fontConfig: String?, fonts: Array<ByteArray>): Long
     private external fun nativeDecode(handle: Long, data: ByteBuffer, length: Int, timeMs: Long, offsetMs: Long): Boolean
     private external fun nativeRender(handle: Long, timeMs: Long, width: Int, height: Int, frame: IntArray): Bitmap?
     private external fun nativeEndTimeMs(handle: Long): Long

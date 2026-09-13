@@ -113,6 +113,12 @@ ffmpeg('-f', 'lavfi', '-i', 'color=c=0x182536:s=640x360:r=24:d=24', '-f', 'lavfi
 for file, codec in [('styled.ass', 'copy'), ('legacy.ssa', 'ass'), ('basic.srt', 'copy'), ('styled.vtt', 'copy'), ('bitmap.sup', 'copy')]:
     ffmpeg('-i', out / 'video.mp4', '-i', out / file, '-map', '0', '-map', '1:0', '-c', 'copy', '-c:s', codec,
            '-metadata:s:s:0', 'language=eng', '-disposition:s:0', 'default', out / (file + '.mkv'))
+font_assets = pathlib.Path(__file__).parents[2] / 'androidTest/assets/subtitles'
+for name in ['font.ass', 'font-embedded.ass', 'shapes.ttf']:
+    (out / name).write_bytes((font_assets / name).read_bytes())
+ffmpeg('-i', out / 'video.mp4', '-i', out / 'font.ass', '-map', '0', '-map', '1:0', '-c', 'copy',
+       '-metadata:s:s:0', 'language=eng', '-disposition:s:0', 'default', '-attach', out / 'shapes.ttf',
+       '-metadata:s:t:0', 'mimetype=application/x-truetype-font', out / 'font.ass.mkv')
 ffmpeg('-i', out / 'video.mp4', '-i', out / 'basic.srt', '-map', '0', '-map', '1:0', '-c', 'copy', '-c:s', 'mov_text',
        '-metadata:s:s:0', 'language=eng', '-disposition:s:0', 'default', out / 'tx3g.mp4')
 ffmpeg('-i', out / 'video.mp4', '-fix_sub_duration', '-i', out / 'bitmap.sup', '-map', '0', '-map', '1:0', '-c', 'copy', '-c:s', 'dvdsub',

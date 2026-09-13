@@ -140,7 +140,7 @@ bool decodeBitmap(TextContext &context, const uint8_t *data, int length, int64_t
 #define JNI_METHOD(name) Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegSubtitleDecoder_##name
 
 extern "C" JNIEXPORT jlong JNICALL
-JNI_METHOD(nativeCreate)(JNIEnv *env, jobject, jstring codecName, jbyteArray header, jstring configPath) try {
+JNI_METHOD(nativeCreate)(JNIEnv *env, jobject, jstring codecName, jbyteArray header, jstring configPath, jobjectArray fonts) try {
     const char *name = env->GetStringUTFChars(codecName, nullptr);
     if (!name) return 0;
     bool ass = strcmp(name, "ass") == 0;
@@ -156,6 +156,25 @@ JNI_METHOD(nativeCreate)(JNIEnv *env, jobject, jstring codecName, jbyteArray hea
         context->library = ass_library_init();
         if (!context->library) return 0;
         ass_set_message_cb(context->library, assLog, nullptr);
+        ass_set_extract_fonts(context->library, 1);
+        const int count = env->GetArrayLength(fonts);
+        if (count > 64) return 0;
+        int total = 0;
+        for (int i = 0; i < count; ++i) {
+            auto font = static_cast<jbyteArray>(env->GetObjectArrayElement(fonts, i));
+            if (!font || env->ExceptionCheck()) return 0;
+            const int size = env->GetArrayLength(font);
+            if (size <= 0 || size > MAX_SAMPLE_BYTES || size > 32 * 1024 * 1024 - total) {
+                env->DeleteLocalRef(font);
+                return 0;
+            }
+            std::vector<char> bytes(size);
+            env->GetByteArrayRegion(font, 0, size, reinterpret_cast<jbyte *>(bytes.data()));
+            env->DeleteLocalRef(font);
+            if (env->ExceptionCheck()) return 0;
+            ass_add_font(context->library, std::to_string(i).c_str(), bytes.data(), size);
+            total += size;
+        }
         context->renderer = ass_renderer_init(context->library);
         context->track = ass_new_track(context->library);
         if (!context->renderer || !context->track) return 0;

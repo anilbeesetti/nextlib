@@ -119,7 +119,8 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
                         C.RESULT_NOTHING_READ -> break
                         C.RESULT_FORMAT_READ -> {
                             val next = checkNotNull(holder.format)
-                            if (next.sampleMimeType != format?.sampleMimeType || next.initializationData != format?.initializationData) {
+                            if (next.sampleMimeType != format?.sampleMimeType || next.initializationData != format?.initializationData ||
+                                next.metadata != format?.metadata) {
                                 resetDecoder()
                             }
                             format = next

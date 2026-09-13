@@ -1,17 +1,18 @@
 --- a/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/service/PlayerService.kt
 +++ b/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/service/PlayerService.kt
-@@ -73,6 +73,8 @@
+@@ -75,6 +75,9 @@
  import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.DecoderManager
  import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.DecoderMode
  import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
++import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegSubtitleExtractorsFactory
 +import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.withFfmpegSubtitles
 +import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.setSubtitleViewportSize
  import io.github.anilbeesetti.nextlib.media3ext.renderer.subtitleDelayMilliseconds
  import io.github.anilbeesetti.nextlib.media3ext.renderer.subtitleSpeed
  import java.io.File
-@@ -201,6 +203,10 @@
+@@ -203,6 +206,10 @@
      }
- 
+
      private val playbackStateListener = object : Player.Listener {
 +        override fun onSurfaceSizeChanged(width: Int, height: Int) {
 +            (mediaSession?.player as? ExoPlayer)?.setSubtitleViewportSize(width, height)
@@ -20,22 +21,47 @@
          override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
              super.onMediaItemTransition(mediaItem, reason)
              if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) return
-@@ -692,7 +698,7 @@
+@@ -684,7 +691,7 @@
              .setRenderersFactory(renderersFactory)
              .setTrackSelector(trackSelector)
              .setMediaSourceFactory(
 -                DefaultMediaSourceFactory(applicationContext).setDataSourceFactory(dataSourceFactory),
-+                DefaultMediaSourceFactory(applicationContext).setDataSourceFactory(dataSourceFactory).withFfmpegSubtitles(dataSourceFactory),
++                DefaultMediaSourceFactory(applicationContext, FfmpegSubtitleExtractorsFactory()).setDataSourceFactory(dataSourceFactory).withFfmpegSubtitles(dataSourceFactory),
              )
              .setAudioAttributes(
                  AudioAttributes.Builder()
 --- a/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/ui/SubtitleView.kt
 +++ b/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/ui/SubtitleView.kt
-@@ -32,6 +32,7 @@
-         modifier = modifier.fillMaxSize(),
-         factory = { context ->
-             SubtitleView(context).apply {
-+                setViewType(SubtitleView.VIEW_TYPE_WEB)
-                 val captioningManager = getSystemService(context, CaptioningManager::class.java) ?: return@apply
-                 if (configuration.useSystemCaptionStyle) {
-                     val systemCaptionStyle = CaptionStyleCompat.createFromCaptionStyle(captioningManager.userStyle)
+@@ -1,6 +1,7 @@
+ package dev.anilbeesetti.nextplayer.feature.player.ui
+
+ import android.graphics.Typeface
++import android.text.Spanned
+ import android.util.TypedValue
+ import android.view.accessibility.CaptioningManager
+ import androidx.annotation.OptIn
+@@ -11,6 +12,9 @@
+ import androidx.compose.ui.viewinterop.AndroidView
+ import androidx.core.content.ContextCompat.getSystemService
+ import androidx.media3.common.Player
++import androidx.media3.common.text.Cue
++import androidx.media3.common.text.RubySpan
++import androidx.media3.common.text.TextEmphasisSpan
+ import androidx.media3.common.util.UnstableApi
+ import androidx.media3.ui.CaptionStyleCompat
+ import androidx.media3.ui.SubtitleView
+@@ -55,6 +59,14 @@
+             }
+         },
+         update = { subtitleView ->
++            // Canvas preserves default centering and the user's font; WebView adds vertical text/ruby.
++            val needsWebView = cuesState.cues.any { cue ->
++                cue.verticalType != Cue.TYPE_UNSET || (cue.text as? Spanned)?.let { text ->
++                    text.getSpans(0, text.length, RubySpan::class.java).isNotEmpty() ||
++                        text.getSpans(0, text.length, TextEmphasisSpan::class.java).isNotEmpty()
++                } == true
++            }
++            subtitleView.setViewType(if (needsWebView) SubtitleView.VIEW_TYPE_WEB else SubtitleView.VIEW_TYPE_CANVAS)
+             subtitleView.setCues(cuesState.cues)
+             if (isInPictureInPictureMode) {
+                 subtitleView.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION)

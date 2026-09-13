@@ -16,7 +16,19 @@ Media3's [Canvas subtitle output](https://github.com/androidx/media/blob/release
 repositions vertical cues horizontally. Its existing
 [`SubtitleView.VIEW_TYPE_WEB`](https://developer.android.com/reference/androidx/media3/ui/SubtitleView)
 supports vertical layout and ruby while retaining canvas output for bitmap cues.
-The NextPlayer patch uses that output, so WebVTT improvements need no new parser.
+The NextPlayer patch uses WebView for vertical cues, ruby and text emphasis, and
+canvas for ordinary subtitles. WebView treats an unset position anchor as a start
+anchor, moving plain SRT to the right; canvas preserves default centering and the
+user's typeface.
+
+`FfmpegSubtitleExtractorsFactory` extends Media3's existing Matroska parsing with
+[font attachment elements](https://www.matroska.org/technical/elements.html#Attachments).
+It passes TTF, OTF and TTC data through format metadata to
+[`ass_add_font`](https://github.com/libass/libass/blob/0.17.3/libass/ass.h), scoped to
+one decoder. Fonts are deliberately excluded from codec initialization bytes:
+MediaSession serializes those bytes in track bundles, which would exceed Binder's
+transaction limit with ordinary font collections. ASS `[Fonts]` sections are also
+enabled through `ass_set_extract_fonts`.
 
 Media3 now normally parses subtitles during extraction. The source helper disables
 that conversion only for formats handled by the native renderer. Globally enabling
@@ -41,21 +53,24 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.SubtitleView
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegSubtitleExtractorsFactory
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.setSubtitleViewportSize
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.withFfmpegSubtitles
 
 val dataSources = DefaultDataSource.Factory(context)
-val sources = DefaultMediaSourceFactory(context)
+val sources = DefaultMediaSourceFactory(context, FfmpegSubtitleExtractorsFactory())
     .setDataSourceFactory(dataSources)
     .withFfmpegSubtitles(dataSources)
 val player = ExoPlayer.Builder(context)
     .setRenderersFactory(NextRenderersFactory(context))
     .setMediaSourceFactory(sources)
     .build()
-subtitleView.setViewType(SubtitleView.VIEW_TYPE_WEB)
 // Call from the ExoPlayer application thread when the viewport changes.
 player.setSubtitleViewportSize(width, height)
 ```
+
+Keep canvas output for ordinary cues. See the NextPlayer patch for selecting
+WebView only when a cue needs vertical layout, ruby or text emphasis.
 
 For external ASS/SSA, supply a normal `MediaItem.SubtitleConfiguration` with
 `MimeTypes.TEXT_SSA`. The helper merges a seekable raw-script source with the main
@@ -161,6 +176,44 @@ NextPlayer's player formatting check and debug APK build passed. The ARM64 APK
 was installed and launched successfully on the connected CPH2689 phone; subtitle
 playback on that phone has not yet been checked.
 
+### Font and alignment fixes (2026-09-13)
+
+The separate test app now centers ordinary SRT cues on canvas. The screenshot
+check fails on the previous APK (854.5 px center on a 1280 px viewport) and passes
+on the corrected APK (639 px, expected 640 px):
+
+```sh
+python3 media3ext/src/test/subtitles/check_srt_alignment.py media3ext/src/test/subtitles/verification/srt-centered.png
+```
+
+An original 860-byte geometric font tests that ASS `[Fonts]` data and MKV attachments
+produce the same bitmap as explicitly supplying that font. The playback matrix
+also checks that the font survives seeking and track re-selection. The font
+generator requires `fonttools` only when regenerating the checked-in font assets;
+the normal fixture generator and emulator runner still need only Python and FFmpeg.
+
+The supplied Death Note episode contains nine font attachments (1,565,484 bytes),
+including Cabin, Dominican and DEATH FONT. Its attachments precede the first media
+cluster. The corrected app was checked with this exact file on an Android 16 ARM64
+disposable emulator; the opening subtitles displayed the authored Dominican face.
+The user's episode and extracted fonts are not included in the repository.
+
+Verification: all 18 device tests passed before the final test additions; the
+expanded [11 subtitle tests](src/test/subtitles/verification/font-instrumentation.txt)
+then passed, including the 13-case playback matrix. A separate
+[exact-file check](src/test/subtitles/verification/sample-font-instrumentation.txt)
+matched all nine extracted font payloads against FFmpeg's SHA-256 hashes and
+verified that font data stays out of MediaSession track bundles. The 11 library
+JVM tests, NextPlayer debug build and player formatting check also passed.
+
+Screenshots: [SRT before](src/test/subtitles/verification/srt-offset.png),
+[SRT centered](src/test/subtitles/verification/srt-centered.png),
+[font fallback](src/test/subtitles/verification/font-fallback.png),
+[attached font](src/test/subtitles/verification/font-attached.png).
+[Vertical WebVTT and ruby](src/test/subtitles/verification/webvtt-canvas-switch.png)
+were also checked after switching from canvas output; the fixture cue was extended
+to the full clip for this visual check.
+
 ## Limits
 
 - Media3 drops FFmpeg-muxed Matroska `D_WEBVTT/SUBTITLES` tracks before renderer
@@ -173,9 +226,13 @@ playback on that phone has not yet been checked.
   NextPlayer also missed the current sparse DVB cue when its track was first
   selected after playback advanced; reopening with the track selected from the
   start rendered it correctly.
-- Android system fonts provide fallback. Embedded Matroska font attachments are
-  not extracted automatically. A custom `FfmpegTextRenderer` constructor accepts
-  a fonts directory supplied by the application. Exact typography needs those fonts.
+- Android system fonts provide fallback when a named font is absent. Use
+  `FfmpegSubtitleExtractorsFactory` for Matroska font attachments; a custom
+  `FfmpegTextRenderer` constructor also accepts an application-supplied fonts
+  directory. Extraction accepts at most 64 fonts, 16 MiB per font and 32 MiB total.
+  Fonts are loaded as their attachment elements are encountered; seeking ahead to
+  attachments placed after media clusters is not implemented. A standalone ASS
+  file must embed its fonts or have them supplied by the application.
 - ASS bitmap styling is authored by the script; `SubtitleView` text font/size and
   embedded-style toggles cannot restyle rasterized ASS. Delay and speed still work.
   Cue coordinates use the subtitle overlay's bounds; alignment to video letterbox,

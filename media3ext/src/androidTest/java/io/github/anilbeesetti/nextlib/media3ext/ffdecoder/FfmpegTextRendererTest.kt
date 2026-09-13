@@ -82,6 +82,73 @@ class FfmpegTextRendererTest {
         }
     }
 
+    @Test fun assUsesEmbeddedFontsAndDoesNotLeakThemToOtherDecoders() {
+        val directory = java.io.File(context.cacheDir, "test-fonts").apply { mkdirs() }
+        val font = java.io.File(directory, "shapes.ttf").apply { writeBytes(asset("shapes.ttf")) }
+        fun render(script: String, fonts: java.io.File? = null) = FfmpegSubtitleDecoder(context, ass, fonts).use {
+            decode(it, asset(script))
+            checkNotNull(it.render(2_000_000, 1280, 720)!!.single().bitmap)
+        }
+        try {
+            val expected = render("font.ass", directory)
+            val fallback = render("font.ass")
+            assertFalse("Fixture must distinguish the authored font from Android fallback", expected.sameAs(fallback))
+            assertTrue("ASS [Fonts] payload must use the authored font", expected.sameAs(render("font-embedded.ass")))
+            assertTrue("Fonts must remain scoped to one decoder", fallback.sameAs(render("font.ass")))
+        } finally {
+            font.delete()
+            directory.delete()
+        }
+    }
+
+    @Test fun matroskaExtractsFontsWithoutAddingThemToSessionBundles() {
+        val args = InstrumentationRegistry.getArguments()
+        val uri = android.net.Uri.parse(args.getString("fontSample") ?: "asset:///subtitles/font.ass.mkv")
+        val dataSource = androidx.media3.datasource.DefaultDataSource.Factory(instrumentation.context).createDataSource()
+        val extractor = FfmpegSubtitleExtractorsFactory().experimentalSetTextTrackTranscodingEnabled(false).createExtractors().first {
+            it.underlyingImplementation is androidx.media3.extractor.mkv.MatroskaExtractor
+        }
+        val formats = mutableListOf<Format>()
+        extractor.init(object : androidx.media3.extractor.ExtractorOutput {
+            override fun track(id: Int, type: Int) = object : androidx.media3.extractor.ForwardingTrackOutput(androidx.media3.extractor.DiscardingTrackOutput()) {
+                override fun format(format: Format) { if (format.sampleMimeType == MimeTypes.TEXT_SSA) formats += format }
+            }
+            override fun endTracks() = Unit
+            override fun seekMap(seekMap: androidx.media3.extractor.SeekMap) = Unit
+        })
+        try {
+            fun open(position: Long): androidx.media3.extractor.DefaultExtractorInput {
+                dataSource.close()
+                val length = dataSource.open(androidx.media3.datasource.DataSpec.Builder().setUri(uri).setPosition(position).build())
+                return androidx.media3.extractor.DefaultExtractorInput(dataSource, position, if (length < 0) length else position + length)
+            }
+            var input = open(0)
+            val seek = androidx.media3.extractor.PositionHolder()
+            var result = androidx.media3.extractor.Extractor.RESULT_CONTINUE
+            while (result != androidx.media3.extractor.Extractor.RESULT_END_OF_INPUT && formats.none { it.metadata != null }) {
+                result = extractor.read(input, seek)
+                if (result == androidx.media3.extractor.Extractor.RESULT_SEEK) input = open(seek.position)
+            }
+            val format = formats.last { it.metadata != null }
+            val metadata = checkNotNull(format.metadata)
+            val fonts = (0 until metadata.length()).mapNotNull {
+                (metadata[it] as? androidx.media3.extractor.metadata.id3.BinaryFrame)?.takeIf { it.id == MATROSKA_FONT_ID }?.data
+            }
+            assertEquals(args.getString("fontCount")?.toInt() ?: 1, fonts.size)
+            args.getString("fontHashes")?.let { hashes ->
+                val actual = fonts.map { bytes ->
+                    java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+                }.toSet()
+                assertEquals(hashes.split(',').toSet(), actual)
+            }
+            assertEquals(2, format.initializationData.size)
+            assertNull("Fonts must not enter MediaSession track bundles", Format.fromBundle(format.toBundle()).metadata)
+        } finally {
+            dataSource.close()
+            extractor.release()
+        }
+    }
+
     @Test fun pgsSupportsZlibPalettePositionAndExplicitClear() {
         val original = asset("pgs-display.bin")
         val compressor = Deflater().apply { setInput(original); finish() }
