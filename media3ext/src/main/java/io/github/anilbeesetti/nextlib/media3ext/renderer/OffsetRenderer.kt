@@ -170,7 +170,7 @@ open class OffsetRenderer {
      * @see syncSpeedMultiplier
      */
     fun getOffsetAdjustedPositionUs(positionUs: Long): Long {
-        val speedAdjustedPositionUs = (positionUs * syncSpeedMultiplier).toLong()
+        val speedAdjustedPositionUs = (positionUs * syncSpeedMultiplier.toDouble()).toLong()
         return speedAdjustedPositionUs - (syncOffsetMilliseconds * 1000)
     }
 }

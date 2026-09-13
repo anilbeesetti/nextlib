@@ -107,7 +107,8 @@ printf '%s\\n' "$PKG_CONFIG_PATH" "$PKG_CONFIG_LIBDIR" > "$prefix/pkgconfig.env"
             assert option in args, (abi, option)
         args = (ffmpeg / f'build/{abi}/configure.args').read_text().splitlines()
         for option in ('--enable-libdav1d', '--enable-decoder=libdav1d', '--enable-decoder=vp8',
-                       '--enable-decoder=vp9', '--pkg-config-flags=--static'):
+                       '--enable-decoder=vp9', '--pkg-config-flags=--static',
+                       '--enable-decoder=pgssub', '--enable-decoder=dvdsub', '--enable-decoder=dvbsub'):
             assert option in args, (abi, option)
         assert '--enable-libvpx' not in args
         assert f'--x86asmexe={root / "bin/nasm"}' in args

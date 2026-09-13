@@ -7,6 +7,7 @@ NextLib is a library for adding ffmpeg codecs to [Media3](https://github.com/and
 ## Currently supported decoders
 - **Audio**: Vorbis, Opus, Flac, Alac, pcm_mulaw, pcm_alaw, MP3, Amrnb, Amrwb, AAC, AC3, EAC3, dca, mlp, truehd
 - **Video**: H.264, HEVC, VP8 and VP9 (FFmpeg built-in decoders), AV1 (dav1d)
+- **Subtitles**: ASS/SSA (libass), PGS, VobSub and DVB (FFmpeg); other text formats retain Media3 parsing.
 
 ## Setup
 Kotlin DSL:
@@ -37,7 +38,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
 
-// OFF: Do not add FFmpeg extension renderers.
+// OFF: Do not add FFmpeg audio/video extension renderers.
 // ON: Enable them at normal priority, after platform renderers.
 // PREFER: Give FFmpeg extension renderers priority.
 val renderersFactory = NextRenderersFactory(applicationContext)
@@ -51,6 +52,11 @@ ExoPlayer.Builder(applicationContext)
 This controls renderer priority and capability fallback: `ON` allows FFmpeg when platform
 renderers cannot support a format. It does not automatically recover from runtime decoder failures;
 applications own error recovery.
+
+For native subtitles, also configure the media source with `withFfmpegSubtitles(dataSourceFactory)`.
+See [subtitle setup, research and verification](media3ext/SUBTITLES.md), including the NextPlayer
+integration patch and disposable-emulator regression runner. Audio/video extension priority does
+not control subtitle routing.
 
 ## Runtime decoder switching
 

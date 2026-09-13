@@ -1,0 +1,41 @@
+--- a/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/service/PlayerService.kt
++++ b/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/service/PlayerService.kt
+@@ -73,6 +73,8 @@
+ import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.DecoderManager
+ import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.DecoderMode
+ import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
++import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.withFfmpegSubtitles
++import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.setSubtitleViewportSize
+ import io.github.anilbeesetti.nextlib.media3ext.renderer.subtitleDelayMilliseconds
+ import io.github.anilbeesetti.nextlib.media3ext.renderer.subtitleSpeed
+ import java.io.File
+@@ -201,6 +203,10 @@
+     }
+ 
+     private val playbackStateListener = object : Player.Listener {
++        override fun onSurfaceSizeChanged(width: Int, height: Int) {
++            (mediaSession?.player as? ExoPlayer)?.setSubtitleViewportSize(width, height)
++        }
++
+         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+             super.onMediaItemTransition(mediaItem, reason)
+             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) return
+@@ -692,7 +698,7 @@
+             .setRenderersFactory(renderersFactory)
+             .setTrackSelector(trackSelector)
+             .setMediaSourceFactory(
+-                DefaultMediaSourceFactory(applicationContext).setDataSourceFactory(dataSourceFactory),
++                DefaultMediaSourceFactory(applicationContext).setDataSourceFactory(dataSourceFactory).withFfmpegSubtitles(dataSourceFactory),
+             )
+             .setAudioAttributes(
+                 AudioAttributes.Builder()
+--- a/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/ui/SubtitleView.kt
++++ b/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/ui/SubtitleView.kt
+@@ -32,6 +32,7 @@
+         modifier = modifier.fillMaxSize(),
+         factory = { context ->
+             SubtitleView(context).apply {
++                setViewType(SubtitleView.VIEW_TYPE_WEB)
+                 val captioningManager = getSystemService(context, CaptioningManager::class.java) ?: return@apply
+                 if (configuration.useSystemCaptionStyle) {
+                     val systemCaptionStyle = CaptionStyleCompat.createFromCaptionStyle(captioningManager.userStyle)

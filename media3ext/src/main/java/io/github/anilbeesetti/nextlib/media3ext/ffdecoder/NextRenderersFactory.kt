@@ -138,6 +138,7 @@ open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(cont
         extensionRendererMode: Int,
         out: ArrayList<Renderer>,
     ) {
+        out.add(FfmpegTextRenderer(context, output, outputLooper))
         out.add(NextTextRenderer(output, outputLooper))
     }
 
