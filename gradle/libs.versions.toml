@@ -2,7 +2,7 @@
 androidCompileSdk = "36"
 agp = "9.4.0"
 kotlin = "2.4.20"
-androidxMedia3 = "1.11.0"
+androidxMedia3 = "1.11.1"
 junit = "4.13.2"
 checkerQual = "4.2.3"
 googleErrorProne = "2.50.0"
