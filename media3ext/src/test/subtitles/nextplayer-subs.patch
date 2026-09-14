@@ -1,0 +1,21 @@
+--- a/app/build.gradle.kts
++++ b/app/build.gradle.kts
+@@ -43,7 +43,7 @@
+ 
+         getByName("debug") {
+             isDebuggable = true
+-            applicationIdSuffix = ".debug"
++            applicationIdSuffix = ".subs"
+         }
+ 
+         create("release-with-debug-signing") {
+--- a/core/ui/src/debug/res/values/strings.xml
++++ b/core/ui/src/debug/res/values/strings.xml
+@@ -1,4 +1,4 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <resources>
+-    <string name="app_name" translatable="false">Next Player Debug</string>
+-</resources>
+\ No newline at end of file
++    <string name="app_name" translatable="false">Next player Subs</string>
++</resources>

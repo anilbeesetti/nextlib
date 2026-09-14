@@ -40,17 +40,18 @@ internal class DecoderRendererController(
     fun mode(trackType: Int): DecoderMode =
         if (trackType == C.TRACK_TYPE_VIDEO) videoMode else audioMode
 
-    fun wrapRenderers(renderers: Array<Renderer>): Array<Renderer> {
+    fun wrapRenderers(renderers: Array<Renderer>, delegates: Array<Renderer>): Array<Renderer> {
         check(this.renderers == null) { "NextRenderersFactory can only create one renderer set" }
         check(renderers.any { it is FfmpegVideoRenderer } && renderers.any { it is FfmpegAudioRenderer }) {
             "Runtime decoder switching requires FFmpeg audio and video renderers"
         }
-        return renderers.map { renderer ->
+        return renderers.mapIndexed { index, renderer ->
             when (renderer.trackType) {
-                C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_AUDIO -> ModeAwareRenderer(renderer) {
+                // Classify the original renderer, before subtitle viewport forwarding wraps it.
+                C.TRACK_TYPE_VIDEO, C.TRACK_TYPE_AUDIO -> ModeAwareRenderer(delegates[index]) {
                     mode(renderer.trackType).enables(renderer is FfmpegVideoRenderer || renderer is FfmpegAudioRenderer)
                 }
-                else -> renderer
+                else -> delegates[index]
             }
         }.toTypedArray().also { this.renderers = it }
     }

@@ -47,6 +47,7 @@ android {
 
 androidComponents {
     onVariants { variant ->
+        variant.sources.assets?.addStaticSourceDirectory(rootProject.file("ffmpeg/output/licenses").absolutePath)
         variant.androidTest?.sources?.assets?.addStaticSourceDirectory("src/test/cpp/fixtures")
     }
 }

@@ -1,0 +1,134 @@
+--- a/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/service/PlayerService.kt
++++ b/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/service/PlayerService.kt
+@@ -75,6 +75,8 @@
+ import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.DecoderManager
+ import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.DecoderMode
+ import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
++import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegSubtitleExtractorsFactory
++import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.withFfmpegSubtitles
+ import io.github.anilbeesetti.nextlib.media3ext.renderer.subtitleDelayMilliseconds
+ import io.github.anilbeesetti.nextlib.media3ext.renderer.subtitleSpeed
+ import java.io.File
+@@ -684,7 +686,7 @@
+             .setRenderersFactory(renderersFactory)
+             .setTrackSelector(trackSelector)
+             .setMediaSourceFactory(
+-                DefaultMediaSourceFactory(applicationContext).setDataSourceFactory(dataSourceFactory),
++                DefaultMediaSourceFactory(applicationContext, FfmpegSubtitleExtractorsFactory()).setDataSourceFactory(dataSourceFactory).withFfmpegSubtitles(dataSourceFactory),
+             )
+             .setAudioAttributes(
+                 AudioAttributes.Builder()
+--- a/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/ui/SubtitleView.kt
++++ b/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/ui/SubtitleView.kt
+@@ -1,6 +1,7 @@
+ package dev.anilbeesetti.nextplayer.feature.player.ui
+
+ import android.graphics.Typeface
++import android.text.Spanned
+ import android.util.TypedValue
+ import android.view.accessibility.CaptioningManager
+ import androidx.annotation.OptIn
+@@ -11,6 +12,9 @@
+ import androidx.compose.ui.viewinterop.AndroidView
+ import androidx.core.content.ContextCompat.getSystemService
+ import androidx.media3.common.Player
++import androidx.media3.common.text.Cue
++import androidx.media3.common.text.RubySpan
++import androidx.media3.common.text.TextEmphasisSpan
+ import androidx.media3.common.util.UnstableApi
+ import androidx.media3.ui.CaptionStyleCompat
+ import androidx.media3.ui.SubtitleView
+@@ -22,6 +26,7 @@
+ @Composable
+ fun SubtitleView(
+     modifier: Modifier = Modifier,
++    bitmapModifier: Modifier = modifier,
+     player: Player,
+     isInPictureInPictureMode: Boolean,
+     configuration: SubtitleConfiguration,
+@@ -29,7 +34,8 @@
+     val cuesState = rememberCuesState(player)
+
+     AndroidView(
+-        modifier = modifier.fillMaxSize(),
++        // Bitmap cues use video coordinates; ordinary text keeps the screen overlay.
++        modifier = (if (cuesState.cues.any { it.bitmap != null }) bitmapModifier else modifier).fillMaxSize(),
+         factory = { context ->
+             SubtitleView(context).apply {
+                 val captioningManager = getSystemService(context, CaptioningManager::class.java) ?: return@apply
+@@ -55,6 +61,14 @@
+             }
+         },
+         update = { subtitleView ->
++            // Canvas preserves default centering and the user's font; WebView adds vertical text/ruby.
++            val needsWebView = cuesState.cues.any { cue ->
++                cue.verticalType != Cue.TYPE_UNSET || (cue.text as? Spanned)?.let { text ->
++                    text.getSpans(0, text.length, RubySpan::class.java).isNotEmpty() ||
++                        text.getSpans(0, text.length, TextEmphasisSpan::class.java).isNotEmpty()
++                } == true
++            }
++            subtitleView.setViewType(if (needsWebView) SubtitleView.VIEW_TYPE_WEB else SubtitleView.VIEW_TYPE_CANVAS)
+             subtitleView.setCues(cuesState.cues)
+             if (isInPictureInPictureMode) {
+                 subtitleView.setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION)
+--- a/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/PlayerContentFrame.kt
++++ b/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/PlayerContentFrame.kt
+@@ -40,19 +40,26 @@
+     subtitleConfiguration: SubtitleConfiguration,
+ ) {
+     val presentationState = rememberPresentationState(player)
++    val videoSizeModifier = modifier
++        .resizeWithContentScale(
++            contentScale = videoZoomAndContentScaleState.videoContentScale.toContentScale(),
++            sourceSizeDp = presentationState.videoSizeDp?.let { size ->
++                size.copy(
++                    width = with(LocalDensity.current) { size.width.toDp().value },
++                    height = with(LocalDensity.current) { size.height.toDp().value },
++                )
++            },
++        )
++    val videoTransform = Modifier.graphicsLayer {
++        scaleX = videoZoomAndContentScaleState.zoom
++        scaleY = videoZoomAndContentScaleState.zoom
++        translationX = videoZoomAndContentScaleState.offset.x
++        translationY = videoZoomAndContentScaleState.offset.y
++    }
+     PlayerSurface(
+         player = player,
+         surfaceType = SURFACE_TYPE_SURFACE_VIEW,
+-        modifier = modifier
+-            .resizeWithContentScale(
+-                contentScale = videoZoomAndContentScaleState.videoContentScale.toContentScale(),
+-                sourceSizeDp = presentationState.videoSizeDp?.let { size ->
+-                    size.copy(
+-                        width = with(LocalDensity.current) { size.width.toDp().value },
+-                        height = with(LocalDensity.current) { size.height.toDp().value },
+-                    )
+-                },
+-            )
++        modifier = videoSizeModifier
+             .onGloballyPositioned {
+                 val bounds = it.boundsInWindow()
+                 val rect = Rect(
+@@ -63,12 +70,7 @@
+                 )
+                 pictureInPictureState.setVideoViewRect(rect)
+             }
+-            .graphicsLayer {
+-                scaleX = videoZoomAndContentScaleState.zoom
+-                scaleY = videoZoomAndContentScaleState.zoom
+-                translationX = videoZoomAndContentScaleState.offset.x
+-                translationY = videoZoomAndContentScaleState.offset.y
+-            },
++            .then(videoTransform),
+     )
+
+     PlayerGestures(
+@@ -81,6 +83,7 @@
+     )
+
+     SubtitleView(
++        bitmapModifier = videoSizeModifier.then(videoTransform),
+         player = player,
+         isInPictureInPictureMode = pictureInPictureState.isInPictureInPictureMode,
+         configuration = subtitleConfiguration,
