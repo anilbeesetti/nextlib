@@ -1,27 +1,15 @@
 --- a/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/service/PlayerService.kt
 +++ b/feature/player/src/main/java/dev/anilbeesetti/nextplayer/feature/player/service/PlayerService.kt
-@@ -75,6 +75,9 @@
+@@ -75,6 +75,8 @@
  import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.DecoderManager
  import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.DecoderMode
  import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
 +import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegSubtitleExtractorsFactory
 +import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.withFfmpegSubtitles
-+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.setSubtitleViewportSize
  import io.github.anilbeesetti.nextlib.media3ext.renderer.subtitleDelayMilliseconds
  import io.github.anilbeesetti.nextlib.media3ext.renderer.subtitleSpeed
  import java.io.File
-@@ -203,6 +206,10 @@
-     }
-
-     private val playbackStateListener = object : Player.Listener {
-+        override fun onSurfaceSizeChanged(width: Int, height: Int) {
-+            (mediaSession?.player as? ExoPlayer)?.setSubtitleViewportSize(width, height)
-+        }
-+
-         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-             super.onMediaItemTransition(mediaItem, reason)
-             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) return
-@@ -684,7 +691,7 @@
+@@ -684,7 +686,7 @@
              .setRenderersFactory(renderersFactory)
              .setTrackSelector(trackSelector)
              .setMediaSourceFactory(

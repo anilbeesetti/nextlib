@@ -170,12 +170,25 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
         }
 
         override fun handleMessage(messageType: Int, message: Any?) {
-            if (messageType == MSG_SET_VIEWPORT) {
-                val size = message as android.util.Size
-                require(size.width in 1..4096 && size.height in 1..4096)
-                width = size.width
-                height = size.height
-            } else super.handleMessage(messageType, message)
+            when (messageType) {
+                MSG_SET_VIDEO_OUTPUT_RESOLUTION -> {
+                    val size = message as androidx.media3.common.util.Size
+                    setViewportSize(size.width, size.height)
+                }
+                MSG_SET_VIEWPORT -> {
+                    val size = message as android.util.Size
+                    setViewportSize(size.width, size.height)
+                }
+                else -> super.handleMessage(messageType, message)
+            }
+        }
+
+        private fun setViewportSize(width: Int, height: Int) {
+            // Bare/detached surfaces report unknown/zero dimensions; retain the last usable canvas.
+            if (width <= 0 || height <= 0) return
+            val scale = minOf(1.0, 1920.0 / width, 1080.0 / height)
+            this.width = maxOf(1, (width * scale).toInt())
+            this.height = maxOf(1, (height * scale).toInt())
         }
 
         override fun onDisabled() {
@@ -196,13 +209,14 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
     }
 }
 
-/** Call when the subtitle viewport changes; bitmaps otherwise use a 1280 x 720 canvas. */
+/**
+ * Supplies dimensions for bare Surfaces or custom renderer factories. [NextRenderersFactory]
+ * automatically follows SurfaceView/TextureView size changes; its fallback canvas is 1280 x 720.
+ */
 @UnstableApi
 fun ExoPlayer.setSubtitleViewportSize(width: Int, height: Int) {
     if (width <= 0 || height <= 0) return
-    // Bound raster work while preserving the viewport's aspect ratio.
-    val scale = minOf(1.0, 1920.0 / width, 1080.0 / height)
-    val size = android.util.Size(maxOf(1, (width * scale).toInt()), maxOf(1, (height * scale).toInt()))
+    val size = android.util.Size(width, height)
     for (i in 0 until rendererCount) {
         val renderer = getRenderer(i)
         if (renderer is FfmpegTextRenderer) createMessage(renderer).setType(FfmpegTextRenderer.MSG_SET_VIEWPORT).setPayload(size).send()

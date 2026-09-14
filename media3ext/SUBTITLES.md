@@ -66,7 +66,6 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.SubtitleView
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegSubtitleExtractorsFactory
-import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.setSubtitleViewportSize
 import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.withFfmpegSubtitles
 
 val dataSources = DefaultDataSource.Factory(context)
@@ -77,9 +76,14 @@ val player = ExoPlayer.Builder(context)
     .setRenderersFactory(NextRenderersFactory(context))
     .setMediaSourceFactory(sources)
     .build()
-// Call from the ExoPlayer application thread when the viewport changes.
-player.setSubtitleViewportSize(width, height)
 ```
+
+`NextRenderersFactory` automatically forwards ExoPlayer's video output dimensions
+to the native subtitle renderer on the playback thread. Attaching or resizing a
+`SurfaceView` or `TextureView` requires no subtitle-size listener in the application.
+The optional `player.setSubtitleViewportSize(width, height)` extension remains for
+bare `Surface` objects, whose dimensions ExoPlayer cannot determine, or custom
+renderer factories. Zero/unknown sizes retain the last usable canvas.
 
 Keep canvas output for ordinary cues. See the NextPlayer patch for selecting
 WebView only when a cue needs vertical layout, ruby or text emphasis.
@@ -130,8 +134,8 @@ adb -s emulator-5582 push /path/to/nextlib/media3ext/src/androidTest/assets/subt
 ```
 
 Open the generated media in NextPlayer. Use **Open local subtitle** for sidecars
-when scoped storage prevents automatic sibling-file discovery. The real ExoPlayer
-lives in NextPlayer's service, so the viewport update is sent there.
+when scoped storage prevents automatic sibling-file discovery. Viewport sizing is
+handled inside nextlib even when the ExoPlayer lives in NextPlayer's service.
 
 ## Verification — 2026-09-12
 
@@ -296,6 +300,26 @@ Media3's existing buffered-seek limitation also affects overlapping WebM cues:
 seeking directly into an overlap may restore only the newer cue. The overlap
 assertion covers continuous playback; this change fixes track discovery and
 packet mapping. The emulator was removed after verification.
+
+### Automatic subtitle viewport (2026-09-14)
+
+Removed NextPlayer's `onSurfaceSizeChanged` subtitle callback. Nextlib now forwards
+the video renderer's `MSG_SET_VIDEO_OUTPUT_RESOLUTION` to its native subtitle
+renderer on the playback thread. Decoder mode selection still classifies the
+original renderer before forwarding is added.
+
+[All 21 device tests passed](src/test/subtitles/verification/automatic-viewport-instrumentation.txt)
+on a disposable ARM64 Android 16 / API 36 emulator. The viewport regression uses
+ExoPlayer's real SurfaceHolder callbacks and compares rendered bitmaps at the
+initial size, after a paused portrait resize, and after a 4K resize capped to
+1920 × 1080. It covers the default, FFmpeg-only and decoder-switching factories,
+surface detachment, unknown dimensions and the optional manual setter.
+
+The 11 library and 18 NextPlayer player JVM tests passed, as did the player
+formatting check and debug APK build. NextPlayer's ASS alignment screenshot
+[passes the existing pixel check](src/test/subtitles/verification/automatic-viewport-alignment.png)
+with no application viewport listener. The updated integration patch applies to
+the clean NextPlayer source. The disposable emulator was removed afterward.
 
 ## Limits
 

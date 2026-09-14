@@ -3,9 +3,11 @@ package io.github.anilbeesetti.nextlib.media3ext.ffdecoder
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import androidx.media3.common.C
 import androidx.media3.common.util.Log
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.ForwardingRenderer
 import androidx.media3.exoplayer.Renderer
 import androidx.media3.exoplayer.audio.AudioRendererEventListener
 import androidx.media3.exoplayer.audio.AudioSink
@@ -20,6 +22,7 @@ import io.github.anilbeesetti.nextlib.media3ext.renderer.NextTextRenderer
  *
  * Create a [DecoderManager] separately and attach it
  * after building the player to change video or audio modes.
+ * Native subtitles automatically follow video surface dimensions reported by ExoPlayer.
  */
 @UnstableApi
 open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(context) {
@@ -45,7 +48,21 @@ open class NextRenderersFactory(context: Context) : DefaultRenderersFactory(cont
             textRendererOutput,
             metadataRendererOutput,
         )
-        return decoderManager?.controller?.wrapRenderers(renderers) ?: renderers
+        val subtitles = renderers.filterIsInstance<FfmpegTextRenderer>()
+        val delegates = renderers.map { renderer ->
+            if (renderer.trackType != C.TRACK_TYPE_VIDEO || subtitles.isEmpty()) renderer else {
+                object : ForwardingRenderer(renderer) {
+                    override fun handleMessage(messageType: Int, message: Any?) {
+                        super.handleMessage(messageType, message)
+                        // ExoPlayer sends surface dimensions to video renderers on the playback thread.
+                        if (messageType == MSG_SET_VIDEO_OUTPUT_RESOLUTION) {
+                            subtitles.forEach { it.handleMessage(messageType, message) }
+                        }
+                    }
+                }
+            }
+        }.toTypedArray()
+        return decoderManager?.controller?.wrapRenderers(renderers, delegates) ?: delegates
     }
 
     override fun buildAudioRenderers(
