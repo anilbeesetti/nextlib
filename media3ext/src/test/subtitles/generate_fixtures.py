@@ -113,6 +113,11 @@ ffmpeg('-f', 'lavfi', '-i', 'color=c=0x182536:s=640x360:r=24:d=24', '-f', 'lavfi
 for file, codec in [('styled.ass', 'copy'), ('legacy.ssa', 'ass'), ('basic.srt', 'copy'), ('styled.vtt', 'copy'), ('bitmap.sup', 'copy')]:
     ffmpeg('-i', out / 'video.mp4', '-i', out / file, '-map', '0', '-map', '1:0', '-c', 'copy', '-c:s', codec,
            '-metadata:s:s:0', 'language=eng', '-disposition:s:0', 'default', out / (file + '.mkv'))
+ffmpeg('-i', out / 'video.mp4', '-i', out / 'styled.vtt', '-map', '0:v', '-map', '1:0',
+       '-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8', '-c:s', 'copy',
+       '-metadata:s:s:0', 'language=eng', '-disposition:s:0', 'default', out / 'styled.vtt.webm')
+ffmpeg('-i', out / 'styled.vtt.webm', '-map', '0', '-c', 'copy',
+       '-disposition:s:0', 'default+captions', out / 'captions.vtt.webm')
 # A cyan video outline surrounds the ASS red rectangle when both use the same viewport.
 ffmpeg('-i', out / 'video.mp4', '-i', out / 'styled.ass', '-map', '0', '-map', '1:0',
        '-vf', 'drawbox=x=49:y=99:w=82:h=22:color=cyan:t=2', '-c:v', 'libx264', '-preset', 'ultrafast',

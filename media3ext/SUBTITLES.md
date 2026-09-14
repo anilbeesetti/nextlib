@@ -30,6 +30,12 @@ MediaSession serializes those bytes in track bundles, which would exceed Binder'
 transaction limit with ordinary font collections. ASS `[Fonts]` sections are also
 enabled through `ass_set_extract_fonts`.
 
+The same extractor accepts WebM `D_WEBVTT/SUBTITLES` and `D_WEBVTT/CAPTIONS`
+tracks. It reuses Media3's Matroska block timing and reconstructs the cue header
+from the identifier and settings stored in each
+[WebM text block](https://www.webmproject.org/docs/container/#storing-webvtt-cue-in-a-webm-block)
+before Media3 parses the WebVTT. The `S_TEXT/WEBVTT` mapping remains unchanged.
+
 Media3 now normally parses subtitles during extraction. The source helper disables
 that conversion only for formats handled by the native renderer. Globally enabling
 the deprecated legacy path caused paused-seek regressions for ordinary text formats
@@ -269,11 +275,30 @@ license notices. It also caught a missing `libswresample.so` dependency in the
 standalone mediainfo AAR; that library is now packaged. CI runs this check before
 publishing. The build's Gradle up-to-date check was also verified.
 
+### Embedded WebM WebVTT (2026-09-14)
+
+Reproduced a missing Greek subtitle track in the supplied VP9/Opus WebM using
+the previous NextPlayer test APK. With the extractor fix, the track appears in
+the subtitle picker and renders its Greek text. Disabling clears it and selecting
+it again restores it. Opening the same file at 00:05 and 01:00 also renders the
+corresponding cues. The supplied media and screenshots remain outside Git.
+
+The disposable ARM64 Android 16 / API 36 emulator passed
+[all 20 device tests](src/test/subtitles/verification/webm-webvtt-instrumentation.txt).
+The playback matrix now includes 16 cases, adding WebVTT in Matroska, WebM
+subtitles and WebM captions. Checks cover cue text and positioning, overlapping
+cues during playback, gap clearing, backward seeking and track re-selection.
+The packet test checks identifiers, CR/LF/CRLF separators, Unicode, leading blank
+payload lines, truncated cues and adjusted sample sizes. All 11 library JVM tests,
+NextPlayer's player formatting check and the debug APK build passed.
+
+Media3's existing buffered-seek limitation also affects overlapping WebM cues:
+seeking directly into an overlap may restore only the newer cue. The overlap
+assertion covers continuous playback; this change fixes track discovery and
+packet mapping. The emulator was removed after verification.
+
 ## Limits
 
-- Media3 drops FFmpeg-muxed Matroska `D_WEBVTT/SUBTITLES` tracks before renderer
-  selection. The generated `styled.vtt.mkv` reproduces this and is not counted as
-  passing. Use an external WebVTT file or a supported container/codec mapping.
 - Media3 can satisfy an A/V backward seek from its buffer without recovering
   discarded sparse subtitle packets. Native renderer resets cannot recover packets
   the extractor does not resend. The matrix's retained back buffer makes its scope

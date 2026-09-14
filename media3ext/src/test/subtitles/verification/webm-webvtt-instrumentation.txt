@@ -1,0 +1,12 @@
+
+io.github.anilbeesetti.nextlib.media3ext.ffdecoder.DecoderManagerLifecycleTest:.
+io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegTextRendererTest:.........
+io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegVideoRendererTest:.......
+io.github.anilbeesetti.nextlib.media3ext.ffdecoder.SubtitlePlaybackTest:..
+io.github.anilbeesetti.nextlib.media3ext.ffdecoder.WebmWebvttOutputTest:.
+
+Time: 44.894
+
+OK (20 tests)
+
+

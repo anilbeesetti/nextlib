@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.media3.common.Format
 import androidx.media3.common.Metadata
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.ParsableByteArray
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.ExtractorInput
@@ -17,8 +18,9 @@ import androidx.media3.extractor.mkv.EbmlProcessor
 import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.extractor.text.DefaultSubtitleParserFactory
 import androidx.media3.extractor.text.SubtitleParser
+import androidx.media3.extractor.text.SubtitleTranscodingExtractorOutput
 
-/** Media3 extractors with Matroska font attachments retained for [FfmpegTextRenderer]. */
+/** Media3 extractors with WebM WebVTT support and Matroska font attachments for [FfmpegTextRenderer]. */
 @UnstableApi
 class FfmpegSubtitleExtractorsFactory private constructor(private val delegate: DefaultExtractorsFactory) : ExtractorsFactory by delegate {
     constructor() : this(DefaultExtractorsFactory())
@@ -41,12 +43,13 @@ class FfmpegSubtitleExtractorsFactory private constructor(private val delegate: 
     override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>) =
         delegate.createExtractors(uri, responseHeaders).map { extractor ->
             if (extractor !is MatroskaExtractor) extractor else {
-                val flags = if (transcode) 0 else MatroskaExtractor.FLAG_EMIT_RAW_SUBTITLE_DATA
-                val matroska = FontMatroskaExtractor(parsers, flags)
+                val matroska = SubtitleMatroskaExtractor(parsers)
                 object : ForwardingExtractor(matroska) {
                     override fun init(output: ExtractorOutput) {
-                        matroska.init(object : ExtractorOutput by output {
-                            override fun track(id: Int, type: Int): TrackOutput = matroska.wrap(output.track(id, type))
+                        // Adapt container packets before Media3 parses them into cues.
+                        val target = if (transcode) SubtitleTranscodingExtractorOutput(output, parsers) else output
+                        matroska.init(object : ExtractorOutput by target {
+                            override fun track(id: Int, type: Int): TrackOutput = matroska.wrap(target.track(id, type))
                         })
                     }
                 }
@@ -56,15 +59,16 @@ class FfmpegSubtitleExtractorsFactory private constructor(private val delegate: 
 
 /** Reuses Media3's EBML parser; fonts never touch disk or a global cache. */
 @UnstableApi
-private class FontMatroskaExtractor(parsers: SubtitleParser.Factory, flags: Int) : MatroskaExtractor(parsers, flags) {
+private class SubtitleMatroskaExtractor(parsers: SubtitleParser.Factory) : MatroskaExtractor(parsers, FLAG_EMIT_RAW_SUBTITLE_DATA) {
     // ponytail: load attachments as encountered; add SeekHead prefetch for fonts stored after clusters.
     private val fonts = linkedMapOf<Long, ByteArray>()
     private val outputs = mutableListOf<Pair<TrackOutput, Format>>()
     private var attachmentPosition = 0L
     private var attachment: ByteArray? = null
     private var totalBytes = 0
+    private var webmWebvtt = false
 
-    fun wrap(output: TrackOutput): TrackOutput = object : ForwardingTrackOutput(output) {
+    fun wrap(output: TrackOutput): TrackOutput = if (webmWebvtt) WebmWebvttOutput(output) else object : ForwardingTrackOutput(output) {
         override fun format(format: Format) {
             if (format.sampleMimeType == MimeTypes.TEXT_SSA) {
                 outputs.removeAll { it.first === output }
@@ -90,10 +94,23 @@ private class FontMatroskaExtractor(parsers: SubtitleParser.Factory, flags: Int)
 
     override fun startMasterElement(id: Int, contentPosition: Long, contentSize: Long) {
         super.startMasterElement(id, contentPosition, contentSize)
+        if (id == TRACK_ENTRY) webmWebvtt = false
         if (id == ATTACHED_FILE) {
             attachmentPosition = contentPosition
             attachment = null
         }
+    }
+
+    override fun stringElement(id: Int, value: String) {
+        if (id == CODEC_ID) {
+            webmWebvtt = value == "D_WEBVTT/SUBTITLES" || value == "D_WEBVTT/CAPTIONS"
+            if (webmWebvtt) {
+                // Reuse Matroska block timing; WebmWebvttOutput relocates the ID and settings.
+                super.stringElement(id, "S_TEXT/WEBVTT")
+                return
+            }
+        }
+        super.stringElement(id, value)
     }
 
     override fun binaryElement(id: Int, contentSize: Int, input: ExtractorInput) {
@@ -129,11 +146,42 @@ private class FontMatroskaExtractor(parsers: SubtitleParser.Factory, flags: Int)
     }
 
     companion object {
+        private const val TRACK_ENTRY = 0xAE
+        private const val CODEC_ID = 0x86
         private const val ATTACHMENTS = 0x1941A469
         private const val ATTACHED_FILE = 0x61A7
         private const val FILE_DATA = 0x465C
         private const val MAX_FONT_BYTES = 16 * 1024 * 1024
         private const val MAX_TOTAL_BYTES = 32 * 1024 * 1024
+    }
+}
+
+/** WebM stores identifier, settings and text; MatroskaExtractor prepends a timed WebVTT header. */
+@UnstableApi
+internal class WebmWebvttOutput(private val output: TrackOutput) : ForwardingTrackOutput(output) {
+    private var sizeAdjustment = 0
+
+    override fun sampleData(data: ParsableByteArray, length: Int) {
+        val sample = ParsableByteArray(ByteArray(length).also { data.readBytes(it, 0, length) })
+        sample.readLine() // WEBVTT
+        sample.readLine() // Empty header line
+        val timing = sample.readLine()
+        val identifier = sample.readLine()
+        val settings = sample.readLine()
+        val converted = if (timing == null || identifier == null || settings == null || sample.bytesLeft() == 0) {
+            // A truncated WebM cue must not turn its identifier/settings into visible text.
+            "WEBVTT\n\n".toByteArray()
+        } else {
+            val payload = sample.readString(sample.bytesLeft()).trimStart('\r', '\n')
+            "WEBVTT\n\n${if (identifier.isEmpty()) "" else "$identifier\n"}$timing $settings\n$payload".toByteArray()
+        }
+        sizeAdjustment += converted.size - length
+        output.sampleData(ParsableByteArray(converted), converted.size)
+    }
+
+    override fun sampleMetadata(timeUs: Long, flags: Int, size: Int, offset: Int, cryptoData: TrackOutput.CryptoData?) {
+        output.sampleMetadata(timeUs, flags, size + sizeAdjustment, offset, cryptoData)
+        sizeAdjustment = 0
     }
 }
 

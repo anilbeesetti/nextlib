@@ -66,8 +66,9 @@ class SubtitlePlaybackTest {
             Triple("font.ass.mkv", null, true),
             Triple("legacy.ssa.mkv", null, true),
             Triple("basic.srt.mkv", null, false),
-            // FFmpeg writes D_WEBVTT/SUBTITLES, which Media3's MatroskaExtractor discards.
-            // Retain that generated file as a reproducer; exercise WebVTT as a sidecar below.
+            Triple("styled.vtt.mkv", null, false),
+            Triple("styled.vtt.webm", null, false),
+            Triple("captions.vtt.webm", null, false),
             Triple("bitmap.sup.mkv", null, true),
             Triple("vobsub.mkv", null, true),
             Triple("dvb.ts", null, true),
@@ -135,6 +136,16 @@ class SubtitlePlaybackTest {
             try {
                 val cues = awaitCues(false)
                 assertEquals("$file chose the wrong renderer", bitmap, cues.first().bitmap != null)
+                if (".vtt." in file) {
+                    val cue = cues.single()
+                    assertEquals("WebVTT green positioned\nbold & underlined", cue.text.toString())
+                    assertEquals("$file lost cue positioning", 0.1f, cue.position, 0.001f)
+                    assertEquals(0.2f, cue.line, 0.001f)
+                    assertEquals(0.8f, cue.size, 0.001f)
+                    val overlapping = awaitCues(false)
+                    assertEquals("$file lost overlapping cues during playback", 2, overlapping.size)
+                    assertTrue(overlapping.any { it.text.toString() == "WebVTT overlapping cue" })
+                }
                 if (file == "font.ass.mkv") {
                     val directory = java.io.File(context.cacheDir, "playback-fonts").apply { mkdirs() }
                     val font = java.io.File(directory, "shapes.ttf")
