@@ -114,7 +114,7 @@ For standalone use, export `ANDROID_HOME` and run `bash ffmpeg/setup.sh` (always
 rebuilds). Run `python3 ffmpeg/test_setup.py` for setup regression checks without
 SDK downloads or native compilation.
 
-To verify AV1 decoding and seeking on a disposable ARM64 Android emulator, build
+To verify AV1 decoding and seeking on a disposable Android target, build
 the library and run the native regression test (requires host FFmpeg with the
 `libsvtav1` encoder):
 
@@ -124,9 +124,12 @@ ANDROID_NDK_HOME=/path/to/sdk/ndk/25.2.9519653 ANDROID_SERIAL=emulator-5554 \
 ```
 
 This checks decoder discovery by both name and codec ID, 8-bit and 10-bit output,
-film-grain decoding, one output frame per sample with no delayed frames at EOS,
-and decoding again after a seek/flush. AV1 uses dav1d's low-delay mode to match
-Media3's `SimpleDecoder` input/output contract.
+film-grain decoding, frame timestamps, draining delayed frames before EOS,
+and decoding again after a seek/flush. AV1 retains dav1d's frame threading;
+the video decoder handles outputs that arrive after their corresponding input.
+
+See [AV1 performance investigation](media3ext/AV1_PERFORMANCE.md) for the
+Next Player #2025 investigation and a repeatable Android decoder benchmark.
 
 See [AV1 verification](media3ext/AV1_VERIFICATION.md) for the Next Player playback
 checks and tested device coverage.

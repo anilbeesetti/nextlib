@@ -1,5 +1,9 @@
 # dav1d AV1 verification — 2026-09-06
 
+This is a historical verification record. The subsequent
+[AV1 performance change](AV1_PERFORMANCE.md) replaces low-delay decoding with
+delayed-output handling and EOS draining to retain dav1d frame threading.
+
 Latest retest: Nextlib `7ed6908` after merging `main` (`01af998`); see
 [main merge retest](#main-merge-retest).
 

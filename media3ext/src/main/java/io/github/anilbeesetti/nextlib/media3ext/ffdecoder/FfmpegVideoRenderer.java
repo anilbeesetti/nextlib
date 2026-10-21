@@ -80,7 +80,7 @@ public final class FfmpegVideoRenderer extends DecoderVideoRenderer {
      * @param eventListener A listener of events. May be null if delivery of events is not required.
      * @param maxDroppedFramesToNotify The maximum number of frames that can be dropped between
      *     invocations of {@link VideoRendererEventListener#onDroppedFrames(int, long)}.
-     * @param threads Number of threads libgav1 will use to decode.
+     * @param threads Number of FFmpeg decoder worker threads.
      * @param numInputBuffers Number of input buffers.
      * @param numOutputBuffers Number of output buffers.
      */

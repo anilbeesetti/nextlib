@@ -10,7 +10,6 @@ import androidx.media3.common.util.Assertions;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
 import androidx.media3.decoder.DecoderInputBuffer;
-import androidx.media3.decoder.SimpleDecoder;
 import androidx.media3.decoder.VideoDecoderOutputBuffer;
 
 import java.nio.ByteBuffer;
@@ -22,17 +21,22 @@ import java.util.List;
  */
 @UnstableApi
 final class FfmpegVideoDecoder extends
-        SimpleDecoder<DecoderInputBuffer, VideoDecoderOutputBuffer, FfmpegDecoderException> {
+        DrainingDecoder<DecoderInputBuffer, VideoDecoderOutputBuffer, FfmpegDecoderException> {
 
     // LINT.IfChange
     private static final int VIDEO_DECODER_SUCCESS = 0;
     private static final int VIDEO_DECODER_ERROR_INVALID_DATA = -1;
     private static final int VIDEO_DECODER_ERROR_OTHER = -2;
+    private static final int VIDEO_DECODER_TRY_AGAIN = -3;
+    private static final int VIDEO_DECODER_END_OF_STREAM = -4;
     // LINT.ThenChange(../../../../../../../jni/ffmpeg_jni.cc)
 
     private final String codecName;
     private long nativeContext;
-    // Initialized by createOutputBuffer() during the SimpleDecoder constructor.
+    private boolean draining;
+    private boolean firstSamplePending;
+    private final Format format;
+    // Initialized by createOutputBuffer() during the DrainingDecoder constructor.
     // Keep every buffer, including outputs held by a renderer during decoder reinitialization.
     private List<VideoDecoderOutputBuffer> outputBuffers;
     @Nullable
@@ -48,7 +52,7 @@ final class FfmpegVideoDecoder extends
      * @param numInputBuffers        Number of input buffers.
      * @param numOutputBuffers       Number of output buffers.
      * @param initialInputBufferSize The initial size of each input buffer, in bytes.
-     * @param threads                Number of threads libgav1 will use to decode.
+     * @param threads                Number of FFmpeg decoder worker threads.
      * @throws FfmpegDecoderException Thrown if an exception occurs when initializing the
      *                                decoder.
      */
@@ -59,6 +63,7 @@ final class FfmpegVideoDecoder extends
             throw new FfmpegDecoderException("Failed to load decoder native library.");
         }
         assert format.sampleMimeType != null;
+        this.format = format;
         codecName = Assertions.checkNotNull(FfmpegLibrary.getCodecName(format.sampleMimeType));
         extraData = getExtraData(format.sampleMimeType, format.initializationData);
         // Format uses clockwise degrees. Ignore unsupported non-right-angle rotations.
@@ -144,47 +149,50 @@ final class FfmpegVideoDecoder extends
         return new FfmpegDecoderException("Unexpected decode error", error);
     }
 
-    @Nullable
     @Override
-    protected FfmpegDecoderException decode(DecoderInputBuffer inputBuffer, VideoDecoderOutputBuffer outputBuffer, boolean reset) {
+    protected boolean decode(DecoderInputBuffer inputBuffer, VideoDecoderOutputBuffer outputBuffer, boolean reset)
+            throws FfmpegDecoderException {
         if (reset) {
             nativeContext = ffmpegReset(nativeContext);
+            draining = false;
+            firstSamplePending = false;
             if (nativeContext == 0) {
-                return new FfmpegDecoderException("Error resetting (see logcat).");
+                throw new FfmpegDecoderException("Error resetting (see logcat).");
             }
         }
-
-        // send packet
-        ByteBuffer inputData = Util.castNonNull(inputBuffer.data);
-        int inputSize = inputData.limit();
-        // enqueue origin data
-        int sendPacketResult = ffmpegSendPacket(nativeContext, inputData, inputSize, inputBuffer.timeUs);
-        if (sendPacketResult == VIDEO_DECODER_ERROR_INVALID_DATA) {
-            outputBuffer.shouldBeSkipped = true;
-            return null;
-        } else if (sendPacketResult == VIDEO_DECODER_ERROR_OTHER) {
-            return new FfmpegDecoderException("ffmpegDecode error: (see logcat)");
+        firstSamplePending |= inputBuffer.isFirstSample();
+        if (!draining) {
+            ByteBuffer inputData = inputBuffer.isEndOfStream() ? null : Util.castNonNull(inputBuffer.data);
+            int inputSize = inputData == null ? 0 : inputData.limit();
+            int result = ffmpegSendPacket(nativeContext, inputData, inputSize, inputBuffer.timeUs);
+            if (result == VIDEO_DECODER_ERROR_INVALID_DATA) return false;
+            if (result != VIDEO_DECODER_SUCCESS) {
+                throw new FfmpegDecoderException("ffmpegSendPacket error (see logcat).");
+            }
+            draining = inputBuffer.isEndOfStream();
         }
 
-        // receive frame
-        boolean decodeOnly = !isAtLeastOutputStartTimeUs(inputBuffer.timeUs);
-        // We need to dequeue the decoded frame from the decoder even when the input data is
-        // decode-only.
-        int getFrameResult = ffmpegReceiveFrame(
-                nativeContext, outputMode, outputBuffer, decodeOnly, rotationDegrees);
-        if (getFrameResult == VIDEO_DECODER_ERROR_OTHER) {
-            return new FfmpegDecoderException("ffmpegDecode error: (see logcat)");
+        int result = ffmpegReceiveFrame(nativeContext, outputMode, outputBuffer, rotationDegrees);
+        if (result == VIDEO_DECODER_TRY_AGAIN) {
+            if (draining) throw new FfmpegDecoderException("Decoder requested input after EOS.");
+            return false;
         }
-
-        if (getFrameResult == VIDEO_DECODER_ERROR_INVALID_DATA) {
-            outputBuffer.shouldBeSkipped = true;
+        if (result == VIDEO_DECODER_END_OF_STREAM) {
+            if (!draining) throw new FfmpegDecoderException("Unexpected decoder EOF.");
+            outputBuffer.addFlag(C.BUFFER_FLAG_END_OF_STREAM);
+            return true;
         }
-
-        if (!decodeOnly) {
-            outputBuffer.format = inputBuffer.format;
+        if (result != VIDEO_DECODER_SUCCESS) {
+            throw new FfmpegDecoderException("ffmpegReceiveFrame error (see logcat).");
         }
-
-        return null;
+        // A delayed frame belongs to an earlier sample. Filter using its decoded PTS,
+        // not the timestamp (or EOS marker) of the input which made it available.
+        outputBuffer.format = format;
+        if (firstSamplePending) {
+            outputBuffer.addFlag(C.BUFFER_FLAG_FIRST_SAMPLE);
+            firstSamplePending = false;
+        }
+        return true;
     }
 
     @Override
@@ -245,7 +253,7 @@ final class FfmpegVideoDecoder extends
      * @return {@link #VIDEO_DECODER_SUCCESS} if successful, {@link #VIDEO_DECODER_ERROR_OTHER} if an
      * error occurred.
      */
-    private native int ffmpegSendPacket(long context, ByteBuffer encodedData, int length,
+    private native int ffmpegSendPacket(long context, @Nullable ByteBuffer encodedData, int length,
                                         long inputTime);
 
     /**
@@ -253,12 +261,10 @@ final class FfmpegVideoDecoder extends
      *
      * @param context      Decoder context.
      * @param outputBuffer Output buffer for the decoded frame.
-     * @return {@link #VIDEO_DECODER_SUCCESS} if successful, {@link #VIDEO_DECODER_ERROR_INVALID_DATA}
-     * if successful but the frame is decode-only, {@link #VIDEO_DECODER_ERROR_OTHER} if an error
-     * occurred.
+     * @return Success, more-input-needed, end-of-stream, or a fatal error status.
      */
     private native int ffmpegReceiveFrame(
-            long context, int outputMode, VideoDecoderOutputBuffer outputBuffer, boolean decodeOnly,
+            long context, int outputMode, VideoDecoderOutputBuffer outputBuffer,
             int rotationDegrees);
 
 }
