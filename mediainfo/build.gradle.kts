@@ -42,6 +42,10 @@ android {
             version = libs.versions.cmake.get()
         }
     }
+
+    packaging {
+        jniLibs.keepDebugSymbols += "**/*.so"
+    }
 }
 
 tasks.configureEach {

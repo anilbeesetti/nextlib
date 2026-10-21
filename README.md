@@ -114,6 +114,24 @@ For standalone use, export `ANDROID_HOME` and run `bash ffmpeg/setup.sh` (always
 rebuilds). Run `python3 ffmpeg/test_setup.py` for setup regression checks without
 SDK downloads or native compilation.
 
+## Native debug symbols
+
+Release AARs retain debug information and ELF build IDs for the JNI wrappers,
+FFmpeg, and its statically linked dav1d and mbedTLS dependencies. The consuming
+app strips the packaged libraries and extracts symbols when its release build
+sets `ndk.debugSymbolLevel = "FULL"`. For app bundles, Android Gradle Plugin
+includes those symbols in the AAB; APK builds also produce
+`app/build/outputs/native-debug-symbols/release/native-debug-symbols.zip` for
+upload to Google Play. The app must have the Android NDK installed.
+
+After `assembleRelease`, run `python3 ffmpeg/test_symbols.py` to check debug
+sections and build IDs in every library for all four ABIs. Use
+`--readelf /path/to/ndk/toolchains/llvm/prebuilt/<host>/bin/llvm-readelf` if GNU
+`readelf` is unavailable. CI runs this check before uploading or publishing AARs.
+Keeping symbols increases AAR download size; the consuming app can still ship
+stripped native libraries. Previously published stripped AARs need a new NextLib
+release and a dependency update in the consuming app to benefit.
+
 To verify AV1 decoding and seeking on a disposable ARM64 Android emulator, build
 the library and run the native regression test (requires host FFmpeg with the
 `libsvtav1` encoder):

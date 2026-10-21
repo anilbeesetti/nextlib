@@ -102,13 +102,16 @@ printf '%s\\n' "$PKG_CONFIG_PATH" "$PKG_CONFIG_LIBDIR" > "$prefix/pkgconfig.env"
         assert f'{toolchain}21-clang' in cross and f"cpu_family = '{cpu}'" in cross
         assert 'needs_exe_wrapper = true' in cross
         args = (ffmpeg / f'build/dav1d/{abi}.args').read_text().splitlines()
-        for option in ('--default-library=static', '-Db_staticpic=true',
+        for option in ('--default-library=static', '-Ddebug=true', '-Db_staticpic=true',
                        '-Denable_tools=false', '-Denable_tests=false', '--libdir=lib'):
             assert option in args, (abi, option)
         args = (ffmpeg / f'build/{abi}/configure.args').read_text().splitlines()
         for option in ('--enable-libdav1d', '--enable-decoder=libdav1d', '--enable-decoder=vp8',
-                       '--enable-decoder=vp9', '--pkg-config-flags=--static'):
+                       '--enable-decoder=vp9', '--pkg-config-flags=--static',
+                       '--enable-debug=3', '--disable-stripping'):
             assert option in args, (abi, option)
+        assert any(option.startswith('--extra-ldflags=') and '-Wl,--build-id=sha1' in option
+                   for option in args), abi
         assert '--enable-libvpx' not in args
         assert f'--x86asmexe={root / "bin/nasm"}' in args
         assert '--disable-postproc' not in args
