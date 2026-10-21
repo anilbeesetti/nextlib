@@ -104,7 +104,7 @@ EOF
       --cross-file="$DAV1D_CROSS_FILE" \
       --prefix="$BUILD_DIR/external/$ABI" --libdir=lib \
       --buildtype=release --default-library=static \
-      -Db_staticpic=true -Denable_tools=false -Denable_tests=false
+      -Ddebug=true -Db_staticpic=true -Denable_tools=false -Denable_tests=false
     ninja -C "$DAV1D_BUILD_DIR" -j"$JOBS"
     ninja -C "$DAV1D_BUILD_DIR" install
   done
@@ -127,6 +127,7 @@ function buildMbedTLS() {
        -DCMAKE_INSTALL_PREFIX="$BUILD_DIR/external/$ABI" \
        -DCMAKE_INSTALL_LIBDIR=lib \
        -DCMAKE_BUILD_TYPE=Release \
+       -DCMAKE_C_FLAGS=-g \
        -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
        -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
        -DUSE_STATIC_MBEDTLS_LIBRARY=ON \
@@ -201,7 +202,7 @@ function buildFfmpeg() {
       --ranlib="${TOOLCHAIN_PREFIX}/bin/llvm-ranlib" \
       --strip="${TOOLCHAIN_PREFIX}/bin/llvm-strip" \
       --extra-cflags="-O3 -fPIC $DEP_CFLAGS" \
-      --extra-ldflags="$DEP_LD_FLAGS -Wl,-z,max-page-size=16384" \
+      --extra-ldflags="$DEP_LD_FLAGS -Wl,--build-id=sha1 -Wl,-z,max-page-size=16384" \
       --pkg-config="$(command -v pkg-config)" \
       --pkg-config-flags=--static \
       --target-os=android \
@@ -224,7 +225,8 @@ function buildFfmpeg() {
       --enable-version3 \
       --enable-mbedtls \
       --extra-ldexeflags=-pie \
-      --disable-debug \
+      --enable-debug=3 \
+      --disable-stripping \
       ${EXTRA_BUILD_CONFIGURATION_FLAGS} \
       ${COMMON_OPTIONS}
 

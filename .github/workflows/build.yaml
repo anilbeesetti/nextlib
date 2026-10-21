@@ -44,6 +44,9 @@ jobs:
       - name: Build Project with gradle
         run: ./gradlew assembleRelease
 
+      - name: Check native debug symbols
+        run: python3 ffmpeg/test_symbols.py
+
       - uses: actions/upload-artifact@v7.0.1
         with:
           name: nextlib-release
