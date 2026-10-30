@@ -1,4 +1,4 @@
-// Exercise production initialization and SimpleDecoder's one-input/one-output contract.
+// Exercise production initialization, delayed output, EOS draining and reset.
 #include "../../main/cpp/ffvideo.cpp"
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -37,28 +37,38 @@ int main(int argc, char **argv) {
 
     for (int pass = 0; pass < 2; pass++) {
         int frames = 0;
-        int result;
-        while ((result = av_read_frame(input, packet)) >= 0) {
-            if (packet->stream_index == stream) {
-                assert(jniContext->SendPacket(packet) == VIDEO_DECODER_SUCCESS);
-                // SimpleDecoder receives once per sample and does not drain at EOS.
-                // Default dav1d frame delay used to cause EAGAIN and lost packets here.
-                assert(jniContext->ReceiveFrame(&frame) == 0);
+        int delayed = 0;
+        int64_t previousPts = AV_NOPTS_VALUE;
+        auto receive = [&]() {
+            int result = jniContext->ReceiveFrame(&frame);
+            if (result == 0) {
                 assert(frame->width == 640 && frame->height == 360);
                 const AVPixFmtDescriptor *format = av_pix_fmt_desc_get(static_cast<AVPixelFormat>(frame->format));
                 assert(format && format->comp[0].depth == depth);
                 assert(frame->data[0] && frame->data[1] && frame->data[2]);
+                assert(previousPts == AV_NOPTS_VALUE || frame->pts > previousPts);
+                previousPts = frame->pts;
                 frames++;
-                av_frame_free(&frame);
+            }
+            av_frame_free(&frame);
+            return result;
+        };
+        int result;
+        while ((result = av_read_frame(input, packet)) >= 0) {
+            if (packet->stream_index == stream) {
+                assert(jniContext->SendPacket(packet) == VIDEO_DECODER_SUCCESS);
+                int received = receive();
+                assert(received == 0 || received == AVERROR(EAGAIN));
             }
             av_packet_unref(packet);
         }
         assert(result == AVERROR_EOF);
         assert(jniContext->SendPacket(nullptr) == VIDEO_DECODER_SUCCESS);
-        assert(jniContext->ReceiveFrame(&frame) == AVERROR_EOF);
-        av_frame_free(&frame);
+        while ((result = receive()) == 0) delayed++;
+        assert(result == AVERROR_EOF);
+        assert(delayed > 0); // This must exercise frame threading, not low-delay mode.
         assert(frames == expectedFrames);
-        printf("PASS: libdav1d %d-bit, %d frames, %s\n", depth, frames, pass ? "after seek/flush" : "initial decode");
+        printf("PASS: libdav1d %d-bit, %d frames (%d drained), %s\n", depth, frames, delayed, pass ? "after seek/flush" : "initial decode");
         if (pass == 0) {
             assert(av_seek_frame(input, stream, 0, AVSEEK_FLAG_BACKWARD) >= 0);
             assert(Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpegReset(
