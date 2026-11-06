@@ -16,7 +16,7 @@ set(
         # List variable name
         ffmpeg_libs_names
         # Values in the list
-        avcodec avformat avutil swscale)
+        avcodec avformat avutil swresample swscale)
 
 foreach (ffmpeg_lib_name ${ffmpeg_libs_names})
     add_library(

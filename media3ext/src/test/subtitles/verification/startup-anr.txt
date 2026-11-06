@@ -1,0 +1,26 @@
+Android 17 disposable emulator, 2026-09-12.
+Input dispatch timeout: application does not have a focused window.
+
+"main" prio=5 tid=1 Runnable
+  | group="main" sCount=0 ucsCount=0 flags=0 obj=0x717c8000 self=0xb40079407c045380
+  | sysTid=10051 nice=-10 cgrp=top-app sched=0/0 handle=0x79429ba79048
+  | state=R schedstat=( 8531806223 3179048908 596 ) utm=632 stm=220 core=1 HZ=100
+  | stack=0x7ffffaf00000-0x7ffffaf02000 stackSize=8176KB
+  | held mutexes= "mutator lock"(shared held)
+  at androidx.media3.session.MediaSessionService.getMediaNotificationManager(MediaSessionService.java:954)
+  at androidx.media3.session.MediaSessionService.getMediaNotificationManager(MediaSessionService.java:943)
+  at androidx.media3.session.MediaSessionService.lambda$addSession$0$androidx-media3-session-MediaSessionService(MediaSessionService.java:368)
+  at androidx.media3.session.MediaSessionService$$ExternalSyntheticLambda5.run(D8$$SyntheticClass:0)
+  at androidx.media3.common.util.Util.postOrRun(Util.java:872)
+  at androidx.media3.session.MediaSessionService.addSession(MediaSessionService.java:365)
+  at androidx.media3.session.MediaSessionService$MediaSessionServiceStub.lambda$connect$0$androidx-media3-session-MediaSessionService$MediaSessionServiceStub(MediaSessionService.java:1094)
+  at androidx.media3.session.MediaSessionService$MediaSessionServiceStub$$ExternalSyntheticLambda0.run(D8$$SyntheticClass:0)
+  at android.os.Handler.handleCallback(Handler.java:1082)
+  at android.os.Handler.dispatchMessageImpl(Handler.java:135)
+  at android.os.Handler.dispatchMessage(Handler.java:126)
+  at android.os.Looper.loopOnce(Looper.java:295)
+  at android.os.Looper.loop(Looper.java:398)
+  at android.app.ActivityThread.main(ActivityThread.java:9569)
+  at java.lang.reflect.Method.invoke(Native method)
+  at com.android.internal.os.RuntimeInit$MethodAndArgsCaller.run(RuntimeInit.java:575)
+  at com.android.internal.os.ZygoteInit.main(ZygoteInit.java:918)

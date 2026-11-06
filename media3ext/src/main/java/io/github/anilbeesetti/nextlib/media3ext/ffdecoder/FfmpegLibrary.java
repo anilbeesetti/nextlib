@@ -125,6 +125,9 @@ public final class FfmpegLibrary {
       case MimeTypes.VIDEO_MPEG2 -> "mpeg2video";
       case MimeTypes.VIDEO_VP8 -> "vp8";
       case MimeTypes.VIDEO_VP9 -> "vp9";
+      case MimeTypes.APPLICATION_PGS -> "pgssub";
+      case MimeTypes.APPLICATION_VOBSUB -> "dvdsub";
+      case MimeTypes.APPLICATION_DVBSUBS -> "dvbsub";
       default -> null;
     };
   }

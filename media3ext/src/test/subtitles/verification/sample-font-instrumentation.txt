@@ -1,0 +1,8 @@
+
+io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegTextRendererTest:.
+
+Time: 0.124
+
+OK (1 test)
+
+

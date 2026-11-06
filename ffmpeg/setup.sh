@@ -5,6 +5,13 @@ set -euo pipefail
 DAV1D_VERSION=1.5.4
 MBEDTLS_VERSION=3.6.7
 FFMPEG_VERSION=9.0.1
+LIBASS_VERSION=0.17.5
+FREETYPE_VERSION=2.14.1
+FRIBIDI_VERSION=1.0.16
+HARFBUZZ_VERSION=14.4.0
+FONTCONFIG_VERSION=2.16.0
+EXPAT_VERSION=2.8.4
+UNIBREAK_VERSION=7.0
 
 # Directories
 BASE_DIR=$(cd "$(dirname "$0")" && pwd)
@@ -18,7 +25,7 @@ MBEDTLS_DIR=$SOURCES_DIR/mbedtls-$MBEDTLS_VERSION
 # Configuration
 ANDROID_ABIS="x86 x86_64 armeabi-v7a arm64-v8a"
 ANDROID_PLATFORM=21
-ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo vp8 vp9 libdav1d"
+ENABLED_DECODERS="vorbis opus flac alac pcm_mulaw pcm_alaw mp3 amrnb amrwb aac ac3 eac3 dca mlp truehd h264 hevc mpeg2video mpegvideo vp8 vp9 libdav1d pgssub dvdsub dvbsub"
 JOBS=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || sysctl -n hw.physicalcpu 2>/dev/null || echo 4)
 
 # Gradle supplies these; standalone callers use the same pinned versions.
@@ -54,7 +61,7 @@ fi
   echo "Android NDK or CMake installation is incomplete." >&2
   exit 1
 }
-for tool in curl tar make pkg-config meson ninja nasm; do
+for tool in curl tar make pkg-config meson ninja nasm python3 gperf; do
   command -v "$tool" >/dev/null || { echo "Missing build tool: $tool" >&2; exit 1; }
 done
 
@@ -63,6 +70,7 @@ mkdir -p "$SOURCES_DIR"
 # Publish a source directory only after a complete download and extraction.
 downloadSource() (
   destination=$2
+  [[ ! -d "$destination" ]] || exit 0
   staging=$(mktemp -d "$SOURCES_DIR/.download.XXXXXX")
   trap 'rm -rf "$staging"' EXIT
   curl --fail --location --retry 3 "$1" -o "$staging/source.tar"
@@ -70,76 +78,90 @@ downloadSource() (
   mv "$staging/$(basename "$destination")" "$destination"
 )
 
-function buildDav1d() {
-  for ABI in $ANDROID_ABIS; do
-    case $ABI in
-      armeabi-v7a) DAV1D_CPU=arm; DAV1D_TOOLCHAIN=armv7a-linux-androideabi ;;
-      arm64-v8a) DAV1D_CPU=aarch64; DAV1D_TOOLCHAIN=aarch64-linux-android ;;
-      x86) DAV1D_CPU=x86; DAV1D_TOOLCHAIN=i686-linux-android ;;
-      x86_64) DAV1D_CPU=x86_64; DAV1D_TOOLCHAIN=x86_64-linux-android ;;
-    esac
+# All native dependencies use the same target and installation prefix.
+function setAbiToolchain() {
+  case $ABI in
+    armeabi-v7a) NATIVE_CPU=arm; NATIVE_TARGET=armv7a-linux-androideabi ;;
+    arm64-v8a) NATIVE_CPU=aarch64; NATIVE_TARGET=aarch64-linux-android ;;
+    x86) NATIVE_CPU=x86; NATIVE_TARGET=i686-linux-android ;;
+    x86_64) NATIVE_CPU=x86_64; NATIVE_TARGET=x86_64-linux-android ;;
+  esac
+}
 
-    DAV1D_BUILD_DIR="$BUILD_DIR/dav1d/$ABI"
-    mkdir -p "$BUILD_DIR/dav1d"
-    DAV1D_CROSS_FILE="$BUILD_DIR/dav1d/$ABI.meson"
-    cat > "$DAV1D_CROSS_FILE" <<EOF
+function buildMeson() {
+  local name=$1 source=$2
+  shift 2
+  for ABI in $ANDROID_ABIS; do
+    setAbiToolchain
+    local prefix="$BUILD_DIR/external/$ABI" build="$BUILD_DIR/$name/$ABI"
+    local cross="$BUILD_DIR/$name/$ABI.meson"
+    mkdir -p "$BUILD_DIR/$name"
+    cat > "$cross" <<EOF
 [binaries]
-c = '$TOOLCHAIN_PREFIX/bin/$DAV1D_TOOLCHAIN$ANDROID_PLATFORM-clang'
+c = '$TOOLCHAIN_PREFIX/bin/$NATIVE_TARGET$ANDROID_PLATFORM-clang'
+cpp = '$TOOLCHAIN_PREFIX/bin/$NATIVE_TARGET$ANDROID_PLATFORM-clang++'
 ar = '$TOOLCHAIN_PREFIX/bin/llvm-ar'
 strip = '$TOOLCHAIN_PREFIX/bin/llvm-strip'
+pkg-config = '$(command -v pkg-config)'
+nasm = '$(command -v nasm)'
 
 [properties]
 needs_exe_wrapper = true
+pkg_config_libdir = '$prefix/lib/pkgconfig'
 
 [host_machine]
 system = 'android'
-cpu_family = '$DAV1D_CPU'
-cpu = '$DAV1D_CPU'
+cpu_family = '$NATIVE_CPU'
+cpu = '$NATIVE_CPU'
 endian = 'little'
 EOF
-
-    # Reconfigure even after an interrupted build or a toolchain/version change.
-    rm -rf "$DAV1D_BUILD_DIR"
-    meson setup "$DAV1D_BUILD_DIR" "$DAV1D_DIR" \
-      --cross-file="$DAV1D_CROSS_FILE" \
-      --prefix="$BUILD_DIR/external/$ABI" --libdir=lib \
-      --buildtype=release --default-library=static \
-      -Db_staticpic=true -Denable_tools=false -Denable_tests=false
-    ninja -C "$DAV1D_BUILD_DIR" -j"$JOBS"
-    ninja -C "$DAV1D_BUILD_DIR" install
+    # Reconfigure after interrupted builds and source/toolchain changes.
+    rm -rf "$build"
+    PKG_CONFIG_PATH= PKG_CONFIG_LIBDIR="$prefix/lib/pkgconfig" meson setup "$build" "$source" \
+      --cross-file="$cross" --prefix="$prefix" --libdir=lib \
+      --buildtype=release --default-library=static --wrap-mode=nodownload \
+      -Db_staticpic=true -Dprefer_static=true -Dauto_features=disabled "$@"
+    ninja -C "$build" -j"$JOBS"
+    ninja -C "$build" install
   done
 }
 
-function buildMbedTLS() {
-    pushd "$MBEDTLS_DIR"
-
-    for ABI in $ANDROID_ABIS; do
-
-      CMAKE_BUILD_DIR=$MBEDTLS_DIR/mbedtls_build_${ABI}
-      rm -rf "${CMAKE_BUILD_DIR}"
-      mkdir -p "${CMAKE_BUILD_DIR}"
-      cd "${CMAKE_BUILD_DIR}"
-
-      "${CMAKE_EXECUTABLE}" .. \
-       -DANDROID_PLATFORM=${ANDROID_PLATFORM} \
-       -DANDROID_ABI=$ABI \
-       -DCMAKE_TOOLCHAIN_FILE="${ANDROID_NDK_HOME}/build/cmake/android.toolchain.cmake" \
-       -DCMAKE_INSTALL_PREFIX="$BUILD_DIR/external/$ABI" \
-       -DCMAKE_INSTALL_LIBDIR=lib \
-       -DCMAKE_BUILD_TYPE=Release \
-       -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-       -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,max-page-size=16384" \
-       -DUSE_STATIC_MBEDTLS_LIBRARY=ON \
-       -DUSE_SHARED_MBEDTLS_LIBRARY=OFF \
-       -DENABLE_PROGRAMS=OFF \
-       -DENABLE_TESTING=0
-
-      make -j$JOBS
-      make install
-
-    done
-    popd
+function buildCmake() {
+  local name=$1 source=$2
+  shift 2
+  for ABI in $ANDROID_ABIS; do
+    local build="$BUILD_DIR/$name/$ABI"
+    rm -rf "$build"
+    "$CMAKE_EXECUTABLE" -S "$source" -B "$build" \
+      -DANDROID_PLATFORM="$ANDROID_PLATFORM" -DANDROID_ABI="$ABI" \
+      -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+      -DCMAKE_INSTALL_PREFIX="$BUILD_DIR/external/$ABI" -DCMAKE_INSTALL_LIBDIR=lib \
+      -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON "$@"
+    "$CMAKE_EXECUTABLE" --build "$build" -j "$JOBS"
+    "$CMAKE_EXECUTABLE" --install "$build"
+  done
 }
+
+function buildAutotools() (
+  name=$1 source=$2
+  shift 2
+  for ABI in $ANDROID_ABIS; do
+    setAbiToolchain
+    build="$BUILD_DIR/$name/$ABI"
+    rm -rf "$build"
+    mkdir -p "$build"
+    cd "$build"
+    CC="$TOOLCHAIN_PREFIX/bin/$NATIVE_TARGET$ANDROID_PLATFORM-clang" \
+      AR="$TOOLCHAIN_PREFIX/bin/llvm-ar" RANLIB="$TOOLCHAIN_PREFIX/bin/llvm-ranlib" \
+      NM="$TOOLCHAIN_PREFIX/bin/llvm-nm" STRIP="$TOOLCHAIN_PREFIX/bin/llvm-strip" \
+      CFLAGS="-O3 -fPIC" LDFLAGS="-Wl,-z,max-page-size=16384" \
+      PKG_CONFIG="$(command -v pkg-config) --static" PKG_CONFIG_PATH= \
+      PKG_CONFIG_LIBDIR="$BUILD_DIR/external/$ABI/lib/pkgconfig" \
+      "$source/configure" --host="$NATIVE_TARGET" --prefix="$BUILD_DIR/external/$ABI" "$@"
+    make -j"$JOBS"
+    make install
+  done
+)
 
 function buildFfmpeg() {
   pushd "$FFMPEG_DIR"
@@ -258,6 +280,32 @@ if [[ ! -d "$DAV1D_DIR" ]]; then
   downloadSource "https://github.com/videolan/dav1d/archive/refs/tags/${DAV1D_VERSION}.tar.gz" "$DAV1D_DIR"
 fi
 
-buildMbedTLS
-buildDav1d
+downloadSource "https://github.com/libass/libass/releases/download/$LIBASS_VERSION/libass-$LIBASS_VERSION.tar.xz" "$SOURCES_DIR/libass-$LIBASS_VERSION"
+downloadSource "https://download.savannah.gnu.org/releases/freetype/freetype-$FREETYPE_VERSION.tar.xz" "$SOURCES_DIR/freetype-$FREETYPE_VERSION"
+downloadSource "https://github.com/fribidi/fribidi/releases/download/v$FRIBIDI_VERSION/fribidi-$FRIBIDI_VERSION.tar.xz" "$SOURCES_DIR/fribidi-$FRIBIDI_VERSION"
+downloadSource "https://github.com/harfbuzz/harfbuzz/releases/download/$HARFBUZZ_VERSION/harfbuzz-$HARFBUZZ_VERSION.tar.xz" "$SOURCES_DIR/harfbuzz-$HARFBUZZ_VERSION"
+downloadSource "https://www.freedesktop.org/software/fontconfig/release/fontconfig-$FONTCONFIG_VERSION.tar.xz" "$SOURCES_DIR/fontconfig-$FONTCONFIG_VERSION"
+downloadSource "https://github.com/libexpat/libexpat/releases/download/R_${EXPAT_VERSION//./_}/expat-$EXPAT_VERSION.tar.xz" "$SOURCES_DIR/expat-$EXPAT_VERSION"
+downloadSource "https://github.com/adah1972/libunibreak/releases/download/libunibreak_${UNIBREAK_VERSION//./_}/libunibreak-$UNIBREAK_VERSION.tar.gz" "$SOURCES_DIR/libunibreak-$UNIBREAK_VERSION"
+
+buildCmake mbedtls "$MBEDTLS_DIR" -DUSE_STATIC_MBEDTLS_LIBRARY=ON -DUSE_SHARED_MBEDTLS_LIBRARY=OFF -DENABLE_PROGRAMS=OFF -DENABLE_TESTING=OFF
+buildMeson dav1d "$DAV1D_DIR" -Denable_tools=false -Denable_tests=false
+buildMeson freetype "$SOURCES_DIR/freetype-$FREETYPE_VERSION" -Dharfbuzz=disabled -Dzlib=system -Dmmap=enabled
+buildMeson fribidi "$SOURCES_DIR/fribidi-$FRIBIDI_VERSION" -Ddocs=false -Dbin=false -Dtests=false
+buildMeson harfbuzz "$SOURCES_DIR/harfbuzz-$HARFBUZZ_VERSION" -Dtests=disabled -Dutilities=disabled -Dsubset=disabled -Draster=disabled -Dvector=disabled -Dgpu=disabled
+buildCmake expat "$SOURCES_DIR/expat-$EXPAT_VERSION" -DEXPAT_SHARED_LIBS=OFF -DEXPAT_BUILD_TOOLS=OFF -DEXPAT_BUILD_EXAMPLES=OFF -DEXPAT_BUILD_TESTS=OFF -DEXPAT_BUILD_DOCS=OFF
+buildMeson fontconfig "$SOURCES_DIR/fontconfig-$FONTCONFIG_VERSION" -Dxml-backend=expat -Dcache-build=disabled -Ddefault-fonts-dirs=/system/fonts -Dadditional-fonts-dirs=/product/fonts,/system_ext/fonts
+buildAutotools unibreak "$SOURCES_DIR/libunibreak-$UNIBREAK_VERSION" --disable-shared --enable-static
+# Upstream Autotools supplies the public symbol export list for the shared library.
+# Its font dependencies are static, so consumers only need libass.so.
+buildAutotools libass "$SOURCES_DIR/libass-$LIBASS_VERSION" --enable-shared --disable-static --enable-fontconfig --enable-libunibreak --disable-test --disable-profile
+for ABI in $ANDROID_ABIS; do
+  mkdir -p "$OUTPUT_DIR/lib/$ABI" "$OUTPUT_DIR/include/$ABI"
+  cp "$BUILD_DIR/external/$ABI/lib/libass.so" "$OUTPUT_DIR/lib/$ABI/"
+  cp -R "$BUILD_DIR/external/$ABI/include/ass" "$OUTPUT_DIR/include/$ABI/"
+done
+for entry in "libass-$LIBASS_VERSION/COPYING" "freetype-$FREETYPE_VERSION/docs/FTL.TXT" "fribidi-$FRIBIDI_VERSION/COPYING" "harfbuzz-$HARFBUZZ_VERSION/COPYING" "fontconfig-$FONTCONFIG_VERSION/COPYING" "expat-$EXPAT_VERSION/COPYING" "libunibreak-$UNIBREAK_VERSION/LICENCE"; do
+  mkdir -p "$OUTPUT_DIR/licenses/native-dependencies/$(dirname "$entry")"
+  cp "$SOURCES_DIR/$entry" "$OUTPUT_DIR/licenses/native-dependencies/$entry"
+done
 buildFfmpeg
