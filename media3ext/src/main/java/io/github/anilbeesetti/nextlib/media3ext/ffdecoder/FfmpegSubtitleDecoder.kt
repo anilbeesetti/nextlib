@@ -74,6 +74,8 @@ internal class FfmpegSubtitleDecoder(context: Context, format: Format, fontsDire
         )
     }
 
+    fun invalidateOutput() = nativeInvalidateOutput(handle)
+
     fun endTimeUs(): Long = nativeEndTimeMs(handle) * 1000
 
     override fun close() {
@@ -85,5 +87,6 @@ internal class FfmpegSubtitleDecoder(context: Context, format: Format, fontsDire
     private external fun nativeDecode(handle: Long, data: ByteBuffer, length: Int, timeMs: Long, offsetMs: Long): Boolean
     private external fun nativeRender(handle: Long, timeMs: Long, width: Int, height: Int, frame: IntArray): Bitmap?
     private external fun nativeEndTimeMs(handle: Long): Long
+    private external fun nativeInvalidateOutput(handle: Long)
     private external fun nativeRelease(handle: Long)
 }

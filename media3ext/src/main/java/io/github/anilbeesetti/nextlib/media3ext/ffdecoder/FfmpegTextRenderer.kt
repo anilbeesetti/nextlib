@@ -41,6 +41,11 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
         renderer.render(getOffsetAdjustedPositionUs(positionUs - offset) + offset, elapsedRealtimeUs)
     }
 
+    override fun resetPosition(positionUs: Long, sampleStreamIsResetToKeyFrame: Boolean) {
+        renderer.seekPositionUs = getOffsetAdjustedPositionUs(positionUs - renderer.offsetUs) + renderer.offsetUs
+        renderer.resetPosition(positionUs, sampleStreamIsResetToKeyFrame)
+    }
+
     private class NativeRenderer(
         val context: Context,
         val output: TextOutput,
@@ -58,6 +63,8 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
         private var width = 1280
         private var height = 720
         var playbackPositionUs = 0L
+        private var lastRenderedPositionUs = C.TIME_UNSET
+        var seekPositionUs = C.TIME_UNSET
 
         val offsetUs: Long get() = streamOffsetUs
 
@@ -90,13 +97,28 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
         }
 
         override fun onPositionReset(positionUs: Long, joining: Boolean, sampleStreamIsResetToKeyFrame: Boolean) {
-            resetDecoder()
+            val targetUs = if (seekPositionUs == C.TIME_UNSET) positionUs else seekPositionUs
+            seekPositionUs = C.TIME_UNSET
+            val bitmapCovered = targetUs >= lastRenderedPositionUs &&
+                (inputEnded || (pending && targetUs <= input.timeUs) || targetUs == lastRenderedPositionUs)
+            if (decoder != null && (format?.sampleMimeType == MimeTypes.TEXT_SSA || bitmapCovered)) {
+                // Retain only covered bitmap time ranges; skipped palette/clear packets require a reset.
+                if (pending) decodePendingSample()
+                decoder?.invalidateOutput()
+                input.clear()
+                pending = false
+                inputEnded = false
+                outputEnded = false
+            } else {
+                resetDecoder()
+            }
             updateOutput(emptyList(), positionUs)
         }
 
         private fun resetDecoder() {
             decoder?.close()
             decoder = null
+            lastRenderedPositionUs = C.TIME_UNSET
             input.clear()
             pending = false
             inputEnded = false
@@ -134,18 +156,7 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
                     }
                 }
                 if (pending && input.timeUs <= positionUs + 1_000_000) {
-                    val currentFormat = checkNotNull(format)
-                    val currentDecoder = decoder ?: FfmpegSubtitleDecoder(context, currentFormat, fontsDirectory).also {
-                        decoder = it
-                        Log.i(name, "Initialized ${currentFormat.sampleMimeType}")
-                    }
-                    val offset = if (currentFormat.subsampleOffsetUs == Format.OFFSET_SAMPLE_RELATIVE) input.timeUs
-                        else currentFormat.subsampleOffsetUs
-                    val data = checkNotNull(input.data)
-                    if (input.isEncrypted || data.remaining() > 16 * 1024 * 1024 || !currentDecoder.decode(data, input.timeUs, offset)) {
-                        Log.w(name, "Ignoring malformed subtitle sample")
-                    }
-                    pending = false
+                    decodePendingSample()
                 }
                 if (pending || inputEnded) break
             }
@@ -153,6 +164,22 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
                 it.render(positionUs, width, height)?.let { cues -> updateOutput(cues, positionUs) }
                 outputEnded = inputEnded && !pending && positionUs >= it.endTimeUs()
             } ?: run { outputEnded = inputEnded }
+            lastRenderedPositionUs = positionUs
+        }
+
+        private fun decodePendingSample() {
+            val currentFormat = checkNotNull(format)
+            val currentDecoder = decoder ?: FfmpegSubtitleDecoder(context, currentFormat, fontsDirectory).also {
+                decoder = it
+                Log.i(name, "Initialized ${currentFormat.sampleMimeType}")
+            }
+            val offset = if (currentFormat.subsampleOffsetUs == Format.OFFSET_SAMPLE_RELATIVE) input.timeUs
+                else currentFormat.subsampleOffsetUs
+            val data = checkNotNull(input.data)
+            if (input.isEncrypted || data.remaining() > 16 * 1024 * 1024 || !currentDecoder.decode(data, input.timeUs, offset)) {
+                Log.w(name, "Ignoring malformed subtitle sample")
+            }
+            pending = false
         }
 
         private fun updateOutput(cues: List<Cue>, positionUs: Long) {

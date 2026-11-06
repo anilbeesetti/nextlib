@@ -132,7 +132,10 @@ bool decodeBitmap(TextContext &context, const uint8_t *data, int length, int64_t
     subtitle->start = time + sub.start_display_time;
     subtitle->end = sub.end_display_time == UINT32_MAX ? INT64_MAX : time + sub.end_display_time;
     context.end = std::max(context.end, subtitle->end == INT64_MAX ? subtitle->start : subtitle->end);
-    context.pending.push_back(std::move(subtitle));
+    // Buffered seeks can re-deliver earlier packets after an already decoded future packet.
+    auto position = std::upper_bound(context.pending.begin(), context.pending.end(), subtitle->start,
+            [](int64_t start, const std::unique_ptr<BitmapSubtitle> &item) { return start < item->start; });
+    context.pending.insert(position, std::move(subtitle));
     return true;
 }
 } // namespace
@@ -214,6 +217,12 @@ JNI_METHOD(nativeDecode)(JNIEnv *env, jobject, jlong handle, jobject buffer, jin
                              : decodeBitmap(*context, data, length, time);
 } catch (const std::bad_alloc &) {
     return false;
+}
+
+extern "C" JNIEXPORT void JNICALL
+JNI_METHOD(nativeInvalidateOutput)(JNIEnv *, jobject, jlong handle) {
+    auto *context = reinterpret_cast<TextContext *>(handle);
+    if (context) context->changed = true;
 }
 
 extern "C" JNIEXPORT jobject JNICALL

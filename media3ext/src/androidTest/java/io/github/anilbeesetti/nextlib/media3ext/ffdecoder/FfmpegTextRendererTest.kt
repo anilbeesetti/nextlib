@@ -239,6 +239,151 @@ class FfmpegTextRendererTest {
         renderer.release()
     }
 
+    @Test fun bufferedBitmapForwardSeekRetainsConsumedDisplayAndFutureClear() {
+        var cues = emptyList<Cue>()
+        val renderer = FfmpegTextRenderer(context, object : TextOutput {
+            override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
+        }, null)
+        val format = Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_PGS).build()
+        val display = asset("pgs-display.bin")
+        val stream = OneSampleStream(format, display, listOf(
+            1_000_000L to display, 7_000_000L to asset("pgs-clear.bin"),
+        ))
+        renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), stream, 0, false, true,
+            0, 0, MediaSource.MediaPeriodId(Any()))
+        renderer.start()
+        try {
+            renderer.render(2_000_000, 0)
+            assertTrue(cues.isNotEmpty())
+            stream.rewind(skipFormat = true)
+            renderer.resetPosition(3_000_000, true)
+            renderer.render(3_000_000, 0)
+            assertTrue("Forward seeks must retain the current bitmap", cues.isNotEmpty())
+            renderer.render(7_500_000, 0)
+            assertTrue("The pending clear still ends the display", cues.isEmpty())
+        } finally {
+            renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+        }
+    }
+
+    @Test fun bitmapSeekBeyondReadCoverageClearsStaleDisplay() {
+        var cues = emptyList<Cue>()
+        val renderer = FfmpegTextRenderer(context, object : TextOutput {
+            override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
+        }, null)
+        val format = Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_PGS).build()
+        val display = asset("pgs-display.bin")
+        val stream = OneSampleStream(format, display, listOf(
+            1_000_000L to display, 4_000_000L to display, 13_000_000L to asset("pgs-clear.bin"),
+        ))
+        renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), stream, 0, false, true,
+            0, 0, MediaSource.MediaPeriodId(Any()))
+        renderer.start()
+        try {
+            renderer.render(2_000_000, 0)
+            assertTrue(cues.isNotEmpty())
+            // A seek beyond the held packet can skip an unseen clear/palette update in the source.
+            renderer.resetPosition(10_000_000, true)
+            renderer.render(10_000_000, 0)
+            assertTrue("Do not carry a bitmap beyond continuously decoded coverage", cues.isEmpty())
+        } finally {
+            renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+        }
+    }
+
+    @Test fun bufferedAssSeekRetainsPendingFuturePacket() {
+        var cues = emptyList<Cue>()
+        val renderer = FfmpegTextRenderer(context, object : TextOutput {
+            override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
+        }, null)
+        val header = asset("styled.ass").toString(Charsets.UTF_8).substringBefore("Dialogue:").toByteArray()
+        val format = ass.buildUpon().setInitializationData(listOf(byteArrayOf(), header)).build()
+        val event = "Dialogue: 0:00:00:00,0:00:04:00,0,0,Default,,0,0,0,,Pending ASS"
+        val stream = OneSampleStream(format, event.toByteArray(), listOf(
+            1_000_000L to event.toByteArray(),
+            10_000_000L to event.replace(",0,0,Default", ",1,0,Default").toByteArray(),
+        ))
+        renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), stream, 0, false, true,
+            0, 0, MediaSource.MediaPeriodId(Any()))
+        renderer.start()
+        try {
+            renderer.render(2_000_000, 0)
+            assertTrue(cues.isNotEmpty())
+            renderer.resetPosition(11_000_000, true)
+            renderer.render(11_000_000, 0)
+            assertTrue("A pending future packet must enter the ASS timeline before reset", cues.isNotEmpty())
+        } finally {
+            renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+        }
+    }
+
+    @Test fun bufferedAssSeekRetainsConsumedEventsAndClearsGaps() {
+        var cues = emptyList<Cue>()
+        val renderer = FfmpegTextRenderer(context, object : TextOutput {
+            override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
+        }, null)
+        renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+        val format = ass.buildUpon().setSubsampleOffsetUs(0).build()
+        val stream = OneSampleStream(format, asset("styled.ass"))
+        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), stream, 0, false, true,
+            0, 0, MediaSource.MediaPeriodId(Any()))
+        renderer.start()
+        try {
+            renderer.render(2_000_000, 0)
+            assertTrue(cues.isNotEmpty())
+            // Buffered seeks do not necessarily re-deliver a sparse subtitle packet.
+            renderer.resetPosition(3_000_000, true)
+            renderer.render(3_000_000, 0)
+            assertTrue("A consumed ASS script must survive an in-buffer seek", cues.isNotEmpty())
+            renderer.resetPosition(7_500_000, true)
+            renderer.render(7_500_000, 0)
+            assertTrue(cues.isEmpty())
+            renderer.resetPosition(2_000_000, true)
+            renderer.render(2_000_000, 0)
+            assertTrue(cues.isNotEmpty())
+            renderer.resetPosition(2_000_000, true)
+            renderer.render(2_000_000, 0)
+            assertTrue("Same-time seeks must not clear an unchanged libass frame", cues.isNotEmpty())
+        } finally {
+            renderer.stop()
+            renderer.disable()
+            renderer.reset()
+            renderer.release()
+        }
+    }
+
+    @Test fun seekAfterFinalStreamEndRepublishesStaticAss() {
+        var cues = emptyList<Cue>()
+        val renderer = FfmpegTextRenderer(context, object : TextOutput {
+            override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
+        }, null)
+        val timeline = androidx.media3.exoplayer.source.SinglePeriodTimeline(
+            2_500_000, true, false, false, null, androidx.media3.common.MediaItem.EMPTY)
+        renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+        renderer.setTimeline(timeline)
+        val format = ass.buildUpon().setSubsampleOffsetUs(0).build()
+        val stream = OneSampleStream(format, asset("font.ass"))
+        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), stream, 0, false, true,
+            0, 0, MediaSource.MediaPeriodId(timeline.getUidOfPeriod(0)))
+        renderer.setCurrentStreamFinal()
+        renderer.start()
+        try {
+            renderer.render(2_000_000, 0)
+            assertTrue(cues.isNotEmpty())
+            renderer.render(2_500_000, 0)
+            assertTrue(cues.isEmpty())
+            assertTrue(renderer.isEnded)
+            renderer.resetPosition(2_000_000, true)
+            renderer.render(2_000_000, 0)
+            assertTrue("Seek back from EOS must repaint an unchanged native frame", cues.isNotEmpty())
+        } finally {
+            renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+        }
+    }
+
     @Test fun capabilitiesRejectEncryptedAndUnsupportedTracks() {
         val renderer = FfmpegTextRenderer(context, object : TextOutput {
             override fun onCues(cueGroup: CueGroup) = Unit
@@ -250,7 +395,8 @@ class FfmpegTextRendererTest {
             Format.Builder().setSampleMimeType(MimeTypes.TEXT_VTT).build())))
     }
 
-    private class OneSampleStream(val format: Format, val bytes: ByteArray) : SampleStream {
+    private class OneSampleStream(val format: Format, val bytes: ByteArray,
+        val samples: List<Pair<Long, ByteArray>> = listOf(0L to bytes)) : SampleStream {
         private var state = 0
         fun rewind(skipFormat: Boolean = false) { state = if (skipFormat) 1 else 0 }
         override fun isReady() = true
@@ -258,10 +404,11 @@ class FfmpegTextRendererTest {
         override fun skipData(positionUs: Long) = 0
         override fun readData(holder: FormatHolder, buffer: DecoderInputBuffer, readFlags: Int): Int {
             if (state++ == 0) { holder.format = format; return C.RESULT_FORMAT_READ }
-            if (state == 2) {
-                buffer.ensureSpaceForWrite(bytes.size)
-                buffer.data!!.put(bytes)
-                buffer.timeUs = 0
+            val sample = samples.getOrNull(state - 2)
+            if (sample != null) {
+                buffer.ensureSpaceForWrite(sample.second.size)
+                buffer.data!!.put(sample.second)
+                buffer.timeUs = sample.first
                 buffer.setFlags(C.BUFFER_FLAG_KEY_FRAME)
             } else buffer.setFlags(C.BUFFER_FLAG_END_OF_STREAM)
             return C.RESULT_BUFFER_READ
