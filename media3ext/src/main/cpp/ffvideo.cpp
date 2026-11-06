@@ -69,6 +69,8 @@ static int native_window_api_disconnect(ANativeWindow *window, int api) {
 static const int VIDEO_DECODER_SUCCESS = 0;
 static const int VIDEO_DECODER_ERROR_INVALID_DATA = -1;
 static const int VIDEO_DECODER_ERROR_OTHER = -2;
+static const int VIDEO_DECODER_TRY_AGAIN = -3;
+static const int VIDEO_DECODER_END_OF_STREAM = -4;
 
 
 // Media3 C.VIDEO_OUTPUT_MODE_SURFACE_YUV.
@@ -311,11 +313,8 @@ JniContext *createVideoContext(JNIEnv *env,
     }
 
     codecContext->thread_count = threads;
-    if (codec->id == AV_CODEC_ID_AV1) {
-        // SimpleDecoder expects a frame per sample and does not drain at EOS.
-        // Disable dav1d's frame delay so each sample yields its output promptly.
-        codecContext->flags |= AV_CODEC_FLAG_LOW_DELAY;
-    }
+    // Keep dav1d's frame threading enabled. DrainingDecoder handles delayed output
+    // and drains every frame at EOS instead of forcing one frame per input.
     codecContext->err_recognition = AV_EF_IGNORE_ERR;
     int result = avcodec_open2(codecContext, codec, nullptr);
     if (result < 0) {
@@ -453,6 +452,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                  jlong input_time) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
 
+    if (!encoded_data) return jniContext->SendPacket(nullptr);
     auto *inputBuffer = (uint8_t *) env->GetDirectBufferAddress(encoded_data);
     if (!inputBuffer || length < 0 ||
         env->GetDirectBufferCapacity(encoded_data) < static_cast<jlong>(length) + AV_INPUT_BUFFER_PADDING_SIZE) {
@@ -479,19 +479,15 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                    jlong jContext,
                                                                                    jint output_mode,
                                                                                    jobject output_buffer,
-                                                                                   jboolean decode_only,
                                                                                    jint rotation_degrees) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
 
     AVFrame *frame = nullptr;
     int result = jniContext->ReceiveFrame(&frame);
 
-    // fail
-    if (decode_only || result == AVERROR(EAGAIN)) {
-        // This is not an error. The input data was decode-only or no displayable
-        // frames are available.
+    if (result == AVERROR(EAGAIN) || result == AVERROR_EOF) {
         av_frame_free(&frame);
-        return VIDEO_DECODER_ERROR_INVALID_DATA;
+        return result == AVERROR_EOF ? VIDEO_DECODER_END_OF_STREAM : VIDEO_DECODER_TRY_AGAIN;
     }
     if (result) {
         av_frame_free(&frame);
