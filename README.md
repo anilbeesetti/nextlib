@@ -53,10 +53,107 @@ This controls renderer priority and capability fallback: `ON` allows FFmpeg when
 renderers cannot support a format. It does not automatically recover from runtime decoder failures;
 applications own error recovery.
 
-For native subtitles, also configure the media source with `withFfmpegSubtitles(dataSourceFactory)`.
-See [subtitle setup, research and verification](media3ext/SUBTITLES.md), including the NextPlayer
-integration patch and disposable-emulator regression runner. Audio/video extension priority does
-not control subtitle routing.
+## Subtitles
+
+Configure the media source and renderers together. Native subtitle routing is independent
+of the audio/video extension renderer priority.
+
+```kotlin
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.FfmpegSubtitleExtractorsFactory
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.NextRenderersFactory
+import io.github.anilbeesetti.nextlib.media3ext.ffdecoder.withFfmpegSubtitles
+
+val dataSources = DefaultDataSource.Factory(context)
+val sources = DefaultMediaSourceFactory(context, FfmpegSubtitleExtractorsFactory())
+    .setDataSourceFactory(dataSources)
+    .withFfmpegSubtitles(dataSources)
+val player = ExoPlayer.Builder(context)
+    .setRenderersFactory(NextRenderersFactory(context))
+    .setMediaSourceFactory(sources)
+    .build()
+```
+
+Pass the same data source factory to both calls so external subtitles share URI support,
+authentication headers and caches. Call `withFfmpegSubtitles` after configuring the default
+factory; set a custom load-error policy on the returned factory to apply it to sidecars too.
+Attach the player to Media3's `PlayerView`, or forward its cues to a `SubtitleView`.
+
+ASS/SSA uses libass for styles, drawings, positioning, animation and karaoke. PGS,
+VobSub and DVB use FFmpeg bitmap decoding. SRT, WebVTT, TTML and MP4 timed text retain
+Media3 parsing. The extractor also supports WebM `D_WEBVTT/SUBTITLES` and
+`D_WEBVTT/CAPTIONS` tracks. Keep Media3's default canvas output for ordinary text;
+applications needing vertical text or ruby can select `SubtitleView.VIEW_TYPE_WEB`.
+
+For an external ASS/SSA file, add a regular subtitle configuration to the video item:
+
+```kotlin
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+
+val subtitle = MediaItem.SubtitleConfiguration.Builder(subtitleUri)
+    .setMimeType(MimeTypes.TEXT_SSA)
+    .setLanguage("en")
+    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+    .build()
+player.setMediaItem(
+    MediaItem.Builder()
+        .setUri(videoUri)
+        .setSubtitleConfigurations(listOf(subtitle))
+        .build()
+)
+player.prepare()
+player.play()
+```
+
+Native cues are already rasterized. Match their overlay bounds, aspect ratio, zoom and
+pan to the video, preserving authored placement rather than allowing subtitle dragging.
+`SubtitleView` text size, typeface and embedded-style controls cannot restyle these bitmaps.
+Ordinary text cues can retain the application's existing positioning and styling controls.
+
+`NextRenderersFactory` automatically forwards `SurfaceView`/`TextureView` dimensions.
+For a bare `Surface` or a custom renderer factory, use the
+`io.github.anilbeesetti.nextlib.media3ext.ffdecoder.setSubtitleViewportSize` extension
+as `player.setSubtitleViewportSize(width, height)`. Rendering is capped at 1920 × 1080;
+unknown dimensions retain the last usable canvas (initially 1280 × 720).
+
+The existing timing extensions apply to native and Media3 subtitles:
+
+```kotlin
+import io.github.anilbeesetti.nextlib.media3ext.renderer.subtitleDelayMilliseconds
+import io.github.anilbeesetti.nextlib.media3ext.renderer.subtitleSpeed
+
+player.subtitleDelayMilliseconds = 500L
+player.subtitleSpeed = 1.002f
+```
+
+Matroska font attachments are loaded through `FfmpegSubtitleExtractorsFactory`.
+Embedded ASS `[Fonts]` sections are supported, with Android system fonts as fallback.
+Custom renderer integrations can supply a fonts directory to `FfmpegTextRenderer`.
+Attachment extraction accepts up to 64 fonts, 16 MiB per font and 32 MiB total;
+attachments after media clusters are loaded only when encountered.
+
+External ASS currently uses a single-period merged source. Multi-period manifests,
+server-side ads, DRM subtitles, live ASS pruning and standalone `.sup`/`.idx` files
+are outside the verified scope. ASS scripts/samples are limited to 16 MiB and bitmap
+canvas dimensions to 4096. Sparse bitmap packets discarded from the playback buffer
+cannot be recovered by the renderer alone; selecting a DVB track after playback has
+advanced may require waiting for the next cue or reopening with the track selected.
+
+To run the subtitle regressions on an already booted disposable emulator (requires
+host FFmpeg and Python 3):
+
+```sh
+ANDROID_HOME=/path/to/sdk ANDROID_SERIAL=emulator-5554 \
+  bash media3ext/src/test/subtitles/run_subtitle_test.sh
+```
+
+The runner generates synthetic media, builds and installs the test APK, and verifies
+the instrumentation result. Generated movies are ignored by Git. Tests cover native
+rendering, Media3 fallback, fonts, viewport changes, timing, seeks and track selection.
 
 ## Runtime decoder switching
 
