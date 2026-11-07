@@ -2,6 +2,7 @@ package io.github.anilbeesetti.nextlib.media3ext.ffdecoder
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.os.SystemClock
 import android.text.TextUtils
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
@@ -17,6 +18,10 @@ internal class FfmpegSubtitleDecoder(context: Context, format: Format, fontsDire
     private val frame = IntArray(7)
     private val ass = format.sampleMimeType == MimeTypes.TEXT_SSA
     private var handle: Long
+    private var lastRenderTimeUs = Long.MIN_VALUE
+    private var lastRenderRealtimeMs = 0L
+    private var lastWidth = 0
+    private var lastHeight = 0
 
     init {
         check(FfmpegLibrary.isAvailable()) { "FFmpeg library unavailable" }
@@ -62,6 +67,15 @@ internal class FfmpegSubtitleDecoder(context: Context, format: Format, fontsDire
 
     /** null means unchanged; an empty list explicitly clears the subtitle view. */
     fun render(timeUs: Long, width: Int, height: Int): List<Cue>? {
+        val now = SystemClock.elapsedRealtime()
+        // Bound animated ASS allocations while allowing seeks and viewport changes immediately.
+        if (ass && width == lastWidth && height == lastHeight &&
+            lastRenderTimeUs != Long.MIN_VALUE && timeUs >= lastRenderTimeUs &&
+            timeUs - lastRenderTimeUs < 100_000 && now - lastRenderRealtimeMs < 33) return null
+        lastRenderTimeUs = timeUs
+        lastRenderRealtimeMs = now
+        lastWidth = width
+        lastHeight = height
         val bitmap = nativeRender(handle, timeUs / 1000, width, height, frame)
         if (frame[0] == 0) return null
         if (bitmap == null) return emptyList()
@@ -74,7 +88,10 @@ internal class FfmpegSubtitleDecoder(context: Context, format: Format, fontsDire
         )
     }
 
-    fun invalidateOutput() = nativeInvalidateOutput(handle)
+    fun invalidateOutput() {
+        lastRenderTimeUs = Long.MIN_VALUE
+        nativeInvalidateOutput(handle)
+    }
 
     fun endTimeUs(): Long = nativeEndTimeMs(handle) * 1000
 

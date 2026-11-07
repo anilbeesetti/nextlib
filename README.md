@@ -79,6 +79,10 @@ val player = ExoPlayer.Builder(context)
 Pass the same data source factory to both calls so external subtitles share URI support,
 authentication headers and caches. Call `withFfmpegSubtitles` after configuring the default
 factory; set a custom load-error policy on the returned factory to apply it to sidecars too.
+To retain other container settings, pass a configured `DefaultExtractorsFactory` to
+`FfmpegSubtitleExtractorsFactory(delegate, matroskaFlags)`. Set Matroska flags explicitly
+in the second argument because its extractor is replaced. Configure a custom subtitle
+parser through `setSubtitleParserFactory` on the wrapper.
 Attach the player to Media3's `PlayerView`, or forward its cues to a `SubtitleView`.
 
 ASS/SSA uses libass for styles, drawings, positioning, animation and karaoke. PGS,
@@ -139,7 +143,8 @@ attachments after media clusters are loaded only when encountered.
 External ASS currently uses a single-period merged source. Multi-period manifests,
 server-side ads, DRM subtitles, live ASS pruning and standalone `.sup`/`.idx` files
 are outside the verified scope. ASS scripts/samples are limited to 16 MiB and bitmap
-canvas dimensions to 4096. Sparse bitmap packets discarded from the playback buffer
+canvas dimensions to 4096. VobSub without codec-private dimensions assumes a 720 × 576
+PAL canvas; provide explicit dimensions for other layouts. Sparse bitmap packets discarded from the playback buffer
 cannot be recovered by the renderer alone; selecting a DVB track after playback has
 advanced may require waiting for the next cue or reopening with the track selected.
 

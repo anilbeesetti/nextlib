@@ -22,8 +22,10 @@ import androidx.media3.extractor.text.SubtitleTranscodingExtractorOutput
 
 /** Media3 extractors with WebM WebVTT support and Matroska font attachments for [FfmpegTextRenderer]. */
 @UnstableApi
-class FfmpegSubtitleExtractorsFactory private constructor(private val delegate: DefaultExtractorsFactory) : ExtractorsFactory by delegate {
-    constructor() : this(DefaultExtractorsFactory())
+class FfmpegSubtitleExtractorsFactory @JvmOverloads constructor(
+    private val delegate: DefaultExtractorsFactory = DefaultExtractorsFactory(),
+    private val matroskaFlags: Int = 0,
+) : ExtractorsFactory by delegate {
     private var parsers: SubtitleParser.Factory = DefaultSubtitleParserFactory()
     private var transcode = true
 
@@ -43,7 +45,7 @@ class FfmpegSubtitleExtractorsFactory private constructor(private val delegate: 
     override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>) =
         delegate.createExtractors(uri, responseHeaders).map { extractor ->
             if (extractor !is MatroskaExtractor) extractor else {
-                val matroska = SubtitleMatroskaExtractor(parsers)
+                val matroska = SubtitleMatroskaExtractor(parsers, matroskaFlags)
                 object : ForwardingExtractor(matroska) {
                     override fun init(output: ExtractorOutput) {
                         // Adapt container packets before Media3 parses them into cues.
@@ -59,7 +61,7 @@ class FfmpegSubtitleExtractorsFactory private constructor(private val delegate: 
 
 /** Reuses Media3's EBML parser; fonts never touch disk or a global cache. */
 @UnstableApi
-private class SubtitleMatroskaExtractor(parsers: SubtitleParser.Factory) : MatroskaExtractor(parsers, FLAG_EMIT_RAW_SUBTITLE_DATA) {
+private class SubtitleMatroskaExtractor(parsers: SubtitleParser.Factory, flags: Int) : MatroskaExtractor(parsers, flags or FLAG_EMIT_RAW_SUBTITLE_DATA) {
     // ponytail: load attachments as encountered; add SeekHead prefetch for fonts stored after clusters.
     private val fonts = linkedMapOf<Long, ByteArray>()
     private val outputs = mutableListOf<Pair<TrackOutput, Format>>()

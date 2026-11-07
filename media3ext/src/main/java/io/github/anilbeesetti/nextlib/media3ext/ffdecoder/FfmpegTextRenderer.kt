@@ -20,6 +20,7 @@ import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.text.TextOutput
 import io.github.anilbeesetti.nextlib.media3ext.renderer.OffsetRenderer
 import java.io.File
+import java.util.concurrent.Executors
 
 /**
  * Renders ASS/SSA with libass and PGS, VobSub and DVB with FFmpeg into bitmap cues.
@@ -34,7 +35,15 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
     constructor(context: Context, output: TextOutput, outputLooper: Looper?, fontsDirectory: File? = null) :
         this(NativeRenderer(context.applicationContext, output, outputLooper, fontsDirectory))
 
+    private var lastDelayMs = 0L
+    private var lastSpeed = 1f
+
     override fun render(positionUs: Long, elapsedRealtimeUs: Long) {
+        if (lastDelayMs != syncOffsetMilliseconds || lastSpeed != syncSpeedMultiplier) {
+            renderer.invalidateOutput()
+            lastDelayMs = syncOffsetMilliseconds
+            lastSpeed = syncSpeedMultiplier
+        }
         // Renderer timestamps include a large stream offset. Apply speed only to media time.
         val offset = renderer.offsetUs
         renderer.playbackPositionUs = positionUs
@@ -57,6 +66,8 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
         private val input = DecoderInputBuffer(DecoderInputBuffer.BUFFER_REPLACEMENT_MODE_DIRECT)
         private var format: Format? = null
         private var decoder: FfmpegSubtitleDecoder? = null
+        private var initialization: DecoderInitialization? = null
+        private var initializationFailed = false
         private var pending = false
         private var inputEnded = false
         private var outputEnded = false
@@ -115,7 +126,13 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
             updateOutput(emptyList(), positionUs)
         }
 
+        fun invalidateOutput() { decoder?.invalidateOutput() }
+
         private fun resetDecoder() {
+            // A detached initializer owns its eventual result; never block playback to cancel it.
+            initialization?.abandon()
+            initialization = null
+            initializationFailed = false
             decoder?.close()
             decoder = null
             lastRenderedPositionUs = C.TIME_UNSET
@@ -169,10 +186,30 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
 
         private fun decodePendingSample() {
             val currentFormat = checkNotNull(format)
-            val currentDecoder = decoder ?: FfmpegSubtitleDecoder(context, currentFormat, fontsDirectory).also {
-                decoder = it
+            if (initializationFailed) {
+                pending = false
+                return
+            }
+            if (decoder == null) {
+                val task = initialization ?: DecoderInitialization {
+                    try {
+                        FfmpegSubtitleDecoder(context, currentFormat, fontsDirectory)
+                    } catch (e: Exception) {
+                        Log.e(name, "Unable to initialize ${currentFormat.sampleMimeType} subtitles", e)
+                        null
+                    }
+                }.also { initialization = it; INITIALIZER.execute(it) }
+                if (!task.complete) return
+                decoder = task.take()
+                initialization = null
+                if (decoder == null) {
+                    initializationFailed = true
+                    pending = false
+                    return
+                }
                 Log.i(name, "Initialized ${currentFormat.sampleMimeType}")
             }
+            val currentDecoder = checkNotNull(decoder)
             val offset = if (currentFormat.subsampleOffsetUs == Format.OFFSET_SAMPLE_RELATIVE) input.timeUs
                 else currentFormat.subsampleOffsetUs
             val data = checkNotNull(input.data)
@@ -225,13 +262,39 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
         }
 
         override fun onRelease() {
-            decoder?.close()
-            decoder = null
+            resetDecoder()
             handler?.removeCallbacksAndMessages(null)
         }
     }
 
+    internal class DecoderInitialization(val create: () -> FfmpegSubtitleDecoder?) : Runnable {
+        @Volatile var complete = false
+            private set
+        private var abandoned = false
+        private var result: FfmpegSubtitleDecoder? = null
+
+        override fun run() {
+            synchronized(this) { if (abandoned) return }
+            val decoder = create()
+            synchronized(this) {
+                if (abandoned) decoder?.close() else result = decoder
+                complete = true
+            }
+        }
+
+        @Synchronized fun take(): FfmpegSubtitleDecoder? = result.also { result = null }
+
+        @Synchronized fun abandon() {
+            abandoned = true
+            result?.close()
+            result = null
+        }
+    }
+
     companion object {
+        private val INITIALIZER = Executors.newSingleThreadExecutor { task ->
+            Thread(task, "nextlib-subtitle-init").apply { isDaemon = true }
+        }
         internal const val MSG_SET_VIEWPORT = 10_001
     }
 }

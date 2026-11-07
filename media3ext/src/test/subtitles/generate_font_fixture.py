@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate the original geometric font and ASS assets; requires fonttools."""
+"""Regenerate the committed shapes.ttf and matching ASS fixtures; requires fonttools."""
 from pathlib import Path
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen

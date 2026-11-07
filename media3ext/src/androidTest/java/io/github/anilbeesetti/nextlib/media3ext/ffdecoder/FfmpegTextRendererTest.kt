@@ -170,6 +170,16 @@ class FfmpegTextRendererTest {
         }
     }
 
+    @Test fun vobsubWithoutCodecPrivateSizeUsesPalCanvas() {
+        val format = Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_VOBSUB).build()
+        FfmpegSubtitleDecoder(context, format, null).use { decoder ->
+            decode(decoder, asset("vobsub-display.bin"))
+            val cue = decoder.render(2_000_000, 1280, 720)!!.single()
+            assertTrue(cue.bitmap!!.width > 0)
+            assertTrue(cue.position in 0f..1f && cue.line in 0f..1f)
+        }
+    }
+
     @Test fun fallbackParsersRetainCommonTextFormatsAndWebvttLayout() {
         for ((file, mime, text) in listOf(
             Triple("basic.srt", MimeTypes.APPLICATION_SUBRIP, "SRT bold and italic"),
@@ -208,7 +218,7 @@ class FfmpegTextRendererTest {
         renderer.syncOffsetMilliseconds = 2000
         renderer.render(offset + 2_000_000, 0)
         assertTrue(cues.isEmpty())
-        renderer.render(offset + 4_000_000, 0)
+        renderUntil(renderer, offset + 4_000_000) { cues.isNotEmpty() }
         assertTrue(cues.isNotEmpty())
         renderer.syncOffsetMilliseconds = 0
         renderer.syncSpeedMultiplier = 2f
@@ -218,7 +228,7 @@ class FfmpegTextRendererTest {
         renderer.resetPosition(offset + 2_000_000, true)
         renderer.setCurrentStreamFinal()
         renderer.syncSpeedMultiplier = 1f
-        renderer.render(offset + 2_000_000, 0)
+        renderUntil(renderer, offset + 2_000_000) { cues.isNotEmpty() }
         assertTrue("Seeking restores cues after native state is reset", cues.isNotEmpty())
         renderer.render(offset + 22_000_000, 0)
         assertTrue(cues.isEmpty())
@@ -231,7 +241,7 @@ class FfmpegTextRendererTest {
             false, true, offset, offset, MediaSource.MediaPeriodId(Any()))
         renderer.setCurrentStreamFinal()
         renderer.start()
-        renderer.render(offset + 2_000_000, 0)
+        renderUntil(renderer, offset + 2_000_000) { cues.isNotEmpty() }
         assertTrue("Re-selection without a fresh Format must retain the absolute timestamp offset", cues.isNotEmpty())
         renderer.stop()
         renderer.disable()
@@ -254,11 +264,11 @@ class FfmpegTextRendererTest {
             0, 0, MediaSource.MediaPeriodId(Any()))
         renderer.start()
         try {
-            renderer.render(2_000_000, 0)
+            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
             assertTrue(cues.isNotEmpty())
             stream.rewind(skipFormat = true)
             renderer.resetPosition(3_000_000, true)
-            renderer.render(3_000_000, 0)
+            renderUntil(renderer, 3_000_000) { cues.isNotEmpty() }
             assertTrue("Forward seeks must retain the current bitmap", cues.isNotEmpty())
             renderer.render(7_500_000, 0)
             assertTrue("The pending clear still ends the display", cues.isEmpty())
@@ -282,7 +292,7 @@ class FfmpegTextRendererTest {
             0, 0, MediaSource.MediaPeriodId(Any()))
         renderer.start()
         try {
-            renderer.render(2_000_000, 0)
+            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
             assertTrue(cues.isNotEmpty())
             // A seek beyond the held packet can skip an unseen clear/palette update in the source.
             renderer.resetPosition(10_000_000, true)
@@ -310,10 +320,10 @@ class FfmpegTextRendererTest {
             0, 0, MediaSource.MediaPeriodId(Any()))
         renderer.start()
         try {
-            renderer.render(2_000_000, 0)
+            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
             assertTrue(cues.isNotEmpty())
             renderer.resetPosition(11_000_000, true)
-            renderer.render(11_000_000, 0)
+            renderUntil(renderer, 11_000_000) { cues.isNotEmpty() }
             assertTrue("A pending future packet must enter the ASS timeline before reset", cues.isNotEmpty())
         } finally {
             renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
@@ -332,20 +342,20 @@ class FfmpegTextRendererTest {
             0, 0, MediaSource.MediaPeriodId(Any()))
         renderer.start()
         try {
-            renderer.render(2_000_000, 0)
+            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
             assertTrue(cues.isNotEmpty())
             // Buffered seeks do not necessarily re-deliver a sparse subtitle packet.
             renderer.resetPosition(3_000_000, true)
-            renderer.render(3_000_000, 0)
+            renderUntil(renderer, 3_000_000) { cues.isNotEmpty() }
             assertTrue("A consumed ASS script must survive an in-buffer seek", cues.isNotEmpty())
             renderer.resetPosition(7_500_000, true)
             renderer.render(7_500_000, 0)
             assertTrue(cues.isEmpty())
             renderer.resetPosition(2_000_000, true)
-            renderer.render(2_000_000, 0)
+            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
             assertTrue(cues.isNotEmpty())
             renderer.resetPosition(2_000_000, true)
-            renderer.render(2_000_000, 0)
+            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
             assertTrue("Same-time seeks must not clear an unchanged libass frame", cues.isNotEmpty())
         } finally {
             renderer.stop()
@@ -371,13 +381,13 @@ class FfmpegTextRendererTest {
         renderer.setCurrentStreamFinal()
         renderer.start()
         try {
-            renderer.render(2_000_000, 0)
+            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
             assertTrue(cues.isNotEmpty())
             renderer.render(2_500_000, 0)
             assertTrue(cues.isEmpty())
             assertTrue(renderer.isEnded)
             renderer.resetPosition(2_000_000, true)
-            renderer.render(2_000_000, 0)
+            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
             assertTrue("Seek back from EOS must repaint an unchanged native frame", cues.isNotEmpty())
         } finally {
             renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
@@ -393,6 +403,100 @@ class FfmpegTextRendererTest {
             ass.buildUpon().setCryptoType(C.CRYPTO_TYPE_FRAMEWORK).build())))
         assertEquals(C.FORMAT_UNSUPPORTED_SUBTYPE, RendererCapabilities.getFormatSupport(renderer.capabilities.supportsFormat(
             Format.Builder().setSampleMimeType(MimeTypes.TEXT_VTT).build())))
+    }
+
+    private fun renderUntil(renderer: FfmpegTextRenderer, positionUs: Long, ready: () -> Boolean) {
+        val deadline = android.os.SystemClock.elapsedRealtime() + 10_000
+        do {
+            renderer.render(positionUs, 0)
+            if (ready()) return
+            Thread.sleep(10)
+        } while (android.os.SystemClock.elapsedRealtime() < deadline)
+        assertTrue("Renderer did not reach the expected state", ready())
+    }
+
+    @Test fun malformedDecoderInitializationDoesNotStopPlaybackAndRecoversOnNewStream() {
+        var cues = emptyList<Cue>()
+        val renderer = FfmpegTextRenderer(context, object : TextOutput {
+            override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
+        }, null)
+        renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+        val broken = Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_VOBSUB)
+            .setInitializationData(listOf("size: 99999x99999".toByteArray())).build()
+        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(broken), OneSampleStream(broken, byteArrayOf(0)),
+            0, false, true, 0, 0, MediaSource.MediaPeriodId(Any()))
+        renderer.setCurrentStreamFinal()
+        renderer.start()
+        try {
+            renderUntil(renderer, 2_000_000) { renderer.isEnded }
+            assertTrue(cues.isEmpty())
+            renderer.stop()
+            renderer.disable()
+            val format = ass.buildUpon().setSubsampleOffsetUs(0).build()
+            renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), OneSampleStream(format, asset("styled.ass")),
+                0, false, true, 0, 0, MediaSource.MediaPeriodId(Any()))
+            renderer.start()
+            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
+        } finally {
+            renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+        }
+    }
+
+    @Test fun animatedAssIsThrottledButPausedInvalidationAndResizeRepaintImmediately() {
+        FfmpegSubtitleDecoder(context, ass, null).use { decoder ->
+            decode(decoder, asset("styled.ass"))
+            assertTrue(decoder.render(2_000_000, 1280, 720)!!.isNotEmpty())
+            assertNull("Immediate animation tick must not allocate", decoder.render(2_001_000, 1280, 720))
+            decoder.invalidateOutput()
+            assertTrue("Paused invalidation must repaint", decoder.render(2_001_000, 1280, 720)!!.isNotEmpty())
+            assertTrue("Paused resize must repaint", decoder.render(2_001_000, 720, 1280)!!.isNotEmpty())
+            assertTrue("Seek into a gap must clear immediately", decoder.render(7_500_000, 720, 1280)!!.isEmpty())
+        }
+    }
+
+    @Test fun abandonedInitializerClosesLateResult() {
+        val started = java.util.concurrent.CountDownLatch(1)
+        val proceed = java.util.concurrent.CountDownLatch(1)
+        var created: FfmpegSubtitleDecoder? = null
+        val task = FfmpegTextRenderer.DecoderInitialization {
+            started.countDown()
+            check(proceed.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            FfmpegSubtitleDecoder(context, ass, null).also {
+                decode(it, asset("styled.ass"))
+                created = it
+            }
+        }
+        val thread = Thread(task).apply { start() }
+        try {
+            assertTrue(started.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            task.abandon()
+        } finally {
+            proceed.countDown()
+            thread.join(10_000)
+        }
+        assertFalse("Initialization must finish", thread.isAlive)
+        assertTrue(task.complete)
+        assertNull("Detached results must never be adopted", task.take())
+        assertNull("Detached native handles must be released", checkNotNull(created).render(2_000_000, 1280, 720))
+    }
+
+    @Test fun disablingDuringInitializationCanReleaseAndStartAnotherRenderer() {
+        repeat(5) {
+            val renderer = FfmpegTextRenderer(context, object : TextOutput {
+                override fun onCues(cueGroup: CueGroup) = Unit
+            }, null)
+            renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+            val format = ass.buildUpon().setSubsampleOffsetUs(0).build()
+            renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), OneSampleStream(format, asset("styled.ass")),
+                0, false, true, 0, 0, MediaSource.MediaPeriodId(Any()))
+            renderer.start()
+            renderer.render(2_000_000, 0)
+            renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+        }
+        FfmpegSubtitleDecoder(context, ass, null).use {
+            decode(it, asset("styled.ass"))
+            assertTrue(it.render(2_000_000, 1280, 720)!!.isNotEmpty())
+        }
     }
 
     private class OneSampleStream(val format: Format, val bytes: ByteArray,

@@ -200,6 +200,11 @@ JNI_METHOD(nativeCreate)(JNIEnv *env, jobject, jstring codecName, jbyteArray hea
             memcpy(context->codec->extradata, extra.data(), headerSize);
             context->codec->extradata_size = headerSize;
         }
+        // DVD codec-private size is optional; retain a usable PAL canvas when absent.
+        if (codec->id == AV_CODEC_ID_DVD_SUBTITLE) {
+            context->codec->width = 720;
+            context->codec->height = 576;
+        }
         if (avcodec_open2(context->codec, codec, nullptr) < 0) return 0;
     }
     return reinterpret_cast<jlong>(context.release());
