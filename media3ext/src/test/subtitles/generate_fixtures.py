@@ -133,6 +133,7 @@ ffmpeg('-i', out / 'video.mp4', '-i', out / 'basic.srt', '-map', '0', '-map', '1
        '-metadata:s:s:0', 'language=eng', '-disposition:s:0', 'default', out / 'tx3g.mp4')
 ffmpeg('-i', out / 'video.mp4', '-fix_sub_duration', '-i', out / 'bitmap.sup', '-map', '0', '-map', '1:0', '-c', 'copy', '-c:s', 'dvdsub',
        '-metadata:s:s:0', 'language=eng', '-disposition:s:0', 'default', out / 'vobsub.mkv')
+ffmpeg('-i', out / 'vobsub.mkv', '-map', '0:s:0', '-c', 'copy', '-f', 'data', out / 'vobsub-display.bin')
 ffmpeg('-i', out / 'video.mp4', '-fix_sub_duration', '-i', out / 'bitmap.sup', '-map', '0', '-map', '1:0', '-c:v', 'copy', '-c:a', 'copy',
        '-c:s', 'dvbsub', '-metadata:s:s:0', 'language=eng', out / 'dvb.ts')
 print(f'Wrote subtitle fixtures to {out}')
