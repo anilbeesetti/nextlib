@@ -12,7 +12,7 @@ import androidx.media3.extractor.metadata.id3.BinaryFrame
 import java.io.File
 import java.nio.ByteBuffer
 
-/** Playback-thread confined native subtitle state. Returned bitmaps belong to the output. */
+/** Construct off the playback thread; confine decode/render to playback after handoff. Bitmaps belong to the output. */
 @UnstableApi
 internal class FfmpegSubtitleDecoder(context: Context, format: Format, fontsDirectory: File?) : AutoCloseable {
     private val frame = IntArray(7)
