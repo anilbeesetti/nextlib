@@ -231,7 +231,7 @@ JNI_METHOD(nativeInvalidateOutput)(JNIEnv *, jobject, jlong handle) {
 }
 
 extern "C" JNIEXPORT jobject JNICALL
-JNI_METHOD(nativeRender)(JNIEnv *env, jobject, jlong handle, jlong time, jint width, jint height, jintArray frame) {
+JNI_METHOD(nativeRender)(JNIEnv *env, jobject, jlong handle, jlong time, jint width, jint height, jintArray frame) try {
     auto *context = reinterpret_cast<TextContext *>(handle);
     jint info[7] = {};
     if (!context || width <= 0 || height <= 0 || width > MAX_DIMENSION || height > MAX_DIMENSION ||
@@ -250,6 +250,13 @@ JNI_METHOD(nativeRender)(JNIEnv *env, jobject, jlong handle, jlong time, jint wi
         images = ass_render_frame(context->renderer, context->track, time, &assChanged);
         changed |= assChanged != 0;
     } else {
+        if (context->current && context->current->start > time) {
+            // Timing controls can move subtitle time behind the currently displayed packet.
+            auto position = std::upper_bound(context->pending.begin(), context->pending.end(), context->current->start,
+                    [](int64_t start, const std::unique_ptr<BitmapSubtitle> &item) { return start < item->start; });
+            context->pending.insert(position, std::move(context->current));
+            changed = true;
+        }
         while (!context->pending.empty() && context->pending.front()->start <= time) {
             context->current = std::move(context->pending.front());
             context->pending.pop_front();
@@ -334,6 +341,8 @@ JNI_METHOD(nativeRender)(JNIEnv *env, jobject, jlong handle, jlong time, jint wi
     }
     AndroidBitmap_unlockPixels(env, bitmap);
     return bitmap;
+} catch (const std::bad_alloc &) {
+    return nullptr;
 }
 
 extern "C" JNIEXPORT jlong JNICALL

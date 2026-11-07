@@ -454,6 +454,90 @@ class FfmpegTextRendererTest {
         }
     }
 
+    @Test fun bitmapDelayAndSpeedChangesHideFutureCueAndRedisplayAtAdjustedTime() {
+        var cues = emptyList<Cue>()
+        val renderer = FfmpegTextRenderer(context, object : TextOutput {
+            override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
+        }, null)
+        renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+        val format = Format.Builder().setSampleMimeType(MimeTypes.APPLICATION_PGS).build()
+        val packet = asset("pgs-display.bin")
+        val stream = OneSampleStream(format, packet, listOf(10_000_000L to packet, 12_000_000L to asset("pgs-clear.bin")))
+        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), stream, 0, false, true,
+            0, 0, MediaSource.MediaPeriodId(Any()))
+        renderer.start()
+        try {
+            renderUntil(renderer, 11_000_000) { cues.isNotEmpty() }
+            renderer.syncOffsetMilliseconds = 3000
+            renderer.render(11_000_000, 0)
+            assertTrue("Increasing delay must hide a bitmap whose start is now in the future", cues.isEmpty())
+            renderUntil(renderer, 13_000_000) { cues.isNotEmpty() }
+            renderer.syncSpeedMultiplier = 0.5f
+            renderer.render(13_000_000, 0)
+            assertTrue("Reducing speed must also hide the future bitmap", cues.isEmpty())
+            renderUntil(renderer, 26_000_000) { cues.isNotEmpty() }
+            renderer.render(30_000_000, 0)
+            assertTrue("The queued clear must still apply", cues.isEmpty())
+        } finally {
+            renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+        }
+    }
+
+    @Test fun initializationErrorsCompleteWithoutRetryingTheTrack() {
+        var attempts = 0
+        val renderer = FfmpegTextRenderer(context, object : TextOutput {
+            override fun onCues(cueGroup: CueGroup) = Unit
+        }, null) {
+            attempts++
+            throw UnsatisfiedLinkError("Injected initialization failure")
+        }
+        renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+        val format = ass.buildUpon().setSubsampleOffsetUs(0).build()
+        val packet = asset("styled.ass")
+        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format),
+            OneSampleStream(format, packet, List(3) { 0L to packet }), 0, false, true,
+            0, 0, MediaSource.MediaPeriodId(Any()))
+        renderer.setCurrentStreamFinal()
+        renderer.start()
+        try {
+            renderUntil(renderer, 2_000_000) { renderer.isEnded }
+            assertEquals("A failed track must not retry initialization for every sample", 1, attempts)
+        } finally {
+            renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+        }
+    }
+
+    @Test fun bufferedSeekDuringInitializationRetainsConsumedAssSample() {
+        val started = java.util.concurrent.CountDownLatch(1)
+        val proceed = java.util.concurrent.CountDownLatch(1)
+        var cues = emptyList<Cue>()
+        val renderer = FfmpegTextRenderer(context, object : TextOutput {
+            override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
+        }, null) { format ->
+            started.countDown()
+            check(proceed.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            FfmpegSubtitleDecoder(context, format, null)
+        }
+        renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+        val format = ass.buildUpon().setSubsampleOffsetUs(0).build()
+        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), OneSampleStream(format, asset("styled.ass")),
+            0, false, true, 0, 0, MediaSource.MediaPeriodId(Any()))
+        renderer.start()
+        try {
+            renderer.render(2_000_000, 0)
+            assertTrue(started.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            renderer.resetPosition(3_000_000, true)
+            proceed.countDown()
+            renderUntil(renderer, 3_000_000) { cues.isNotEmpty() }
+            renderer.resetPosition(7_500_000, true)
+            renderer.render(7_500_000, 0)
+            assertTrue("The retained script must still clear cue gaps", cues.isEmpty())
+        } finally {
+            proceed.countDown()
+            renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+        }
+    }
+
     @Test fun abandonedInitializerClosesLateResult() {
         val started = java.util.concurrent.CountDownLatch(1)
         val proceed = java.util.concurrent.CountDownLatch(1)

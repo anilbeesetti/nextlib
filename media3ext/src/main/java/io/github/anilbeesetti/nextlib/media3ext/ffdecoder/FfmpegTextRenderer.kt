@@ -35,6 +35,9 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
     constructor(context: Context, output: TextOutput, outputLooper: Looper?, fontsDirectory: File? = null) :
         this(NativeRenderer(context.applicationContext, output, outputLooper, fontsDirectory))
 
+    internal constructor(context: Context, output: TextOutput, outputLooper: Looper?, createDecoder: (Format) -> FfmpegSubtitleDecoder) :
+        this(NativeRenderer(context.applicationContext, output, outputLooper, null, createDecoder))
+
     private var lastDelayMs = 0L
     private var lastSpeed = 1f
 
@@ -60,6 +63,7 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
         val output: TextOutput,
         looper: Looper?,
         val fontsDirectory: File?,
+        val createDecoder: (Format) -> FfmpegSubtitleDecoder = { FfmpegSubtitleDecoder(context, it, fontsDirectory) },
     ) : BaseRenderer(C.TRACK_TYPE_TEXT) {
         private val handler = looper?.let { Handler(it) }
         private val holder = FormatHolder()
@@ -112,7 +116,11 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
             seekPositionUs = C.TIME_UNSET
             val bitmapCovered = targetUs >= lastRenderedPositionUs &&
                 (inputEnded || (pending && targetUs <= input.timeUs) || targetUs == lastRenderedPositionUs)
-            if (decoder != null && (format?.sampleMimeType == MimeTypes.TEXT_SSA || bitmapCovered)) {
+            if (format?.sampleMimeType == MimeTypes.TEXT_SSA && initialization != null) {
+                // A buffered seek may not resend the script held during background font setup.
+                inputEnded = false
+                outputEnded = false
+            } else if (decoder != null && (format?.sampleMimeType == MimeTypes.TEXT_SSA || bitmapCovered)) {
                 // Retain only covered bitmap time ranges; skipped palette/clear packets require a reset.
                 if (pending) decodePendingSample()
                 decoder?.invalidateOutput()
@@ -193,8 +201,8 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
             if (decoder == null) {
                 val task = initialization ?: DecoderInitialization {
                     try {
-                        FfmpegSubtitleDecoder(context, currentFormat, fontsDirectory)
-                    } catch (e: Exception) {
+                        createDecoder(currentFormat)
+                    } catch (e: Throwable) {
                         Log.e(name, "Unable to initialize ${currentFormat.sampleMimeType} subtitles", e)
                         null
                     }
