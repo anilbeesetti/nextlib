@@ -119,7 +119,7 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
             if (format?.sampleMimeType == MimeTypes.TEXT_SSA && initialization != null) {
                 // Retain consumed scripts, but let the source resend packets ahead of a backward seek.
                 val embeddedAss = format?.initializationData?.getOrNull(1)?.isNotEmpty() == true
-                if (embeddedAss && pending && input.timeUs > targetUs) {
+                if (embeddedAss && pending && input.timeUs > positionUs) {
                     input.clear()
                     pending = false
                 }

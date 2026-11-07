@@ -541,39 +541,43 @@ class FfmpegTextRendererTest {
         }
     }
 
-    @Test fun backwardSeekDuringInitializationDoesNotBlockEarlierEmbeddedAss() {
-        val started = java.util.concurrent.CountDownLatch(1)
-        val proceed = java.util.concurrent.CountDownLatch(1)
-        var cues = emptyList<Cue>()
-        val renderer = FfmpegTextRenderer(context, object : TextOutput {
-            override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
-        }, null) { format ->
-            started.countDown()
-            check(proceed.await(10, java.util.concurrent.TimeUnit.SECONDS))
-            FfmpegSubtitleDecoder(context, format, null)
-        }
-        val header = asset("styled.ass").toString(Charsets.UTF_8).substringBefore("Dialogue:").toByteArray()
-        val format = ass.buildUpon().setInitializationData(listOf(byteArrayOf(), header)).build()
-        val event = "Dialogue: 0:00:00:00,0:00:04:00,0,0,Default,,0,0,0,,Early cue"
-        val stream = OneSampleStream(format, event.toByteArray(), listOf(
-            1_000_000L to event.toByteArray(),
-            8_000_000L to event.replace(",0,0,Default", ",1,0,Default").toByteArray(),
-        ))
-        renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
-        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), stream, 8_000_000, false, true,
-            0, 0, MediaSource.MediaPeriodId(Any()))
-        stream.seekToSample(1)
-        renderer.start()
-        try {
-            renderer.render(8_000_000, 0)
-            assertTrue(started.await(10, java.util.concurrent.TimeUnit.SECONDS))
-            stream.rewind(skipFormat = true)
-            renderer.resetPosition(0, true)
-            proceed.countDown()
-            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
-        } finally {
-            proceed.countDown()
-            renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+    @Test fun seeksDuringInitializationRetainOnlyConsumedEmbeddedAss() {
+        for (forward in listOf(false, true)) {
+            val started = java.util.concurrent.CountDownLatch(1)
+            val proceed = java.util.concurrent.CountDownLatch(1)
+            var cues = emptyList<Cue>()
+            val renderer = FfmpegTextRenderer(context, object : TextOutput {
+                override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
+            }, null) { format ->
+                started.countDown()
+                check(proceed.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                FfmpegSubtitleDecoder(context, format, null)
+            }
+            val header = asset("styled.ass").toString(Charsets.UTF_8).substringBefore("Dialogue:").toByteArray()
+            val format = ass.buildUpon().setInitializationData(listOf(byteArrayOf(), header)).build()
+            val event = "Dialogue: 0:00:00:00,0:00:04:00,0,0,Default,,0,0,0,,Early cue"
+            val stream = OneSampleStream(format, event.toByteArray(), listOf(
+                1_000_000L to event.toByteArray(),
+                8_000_000L to event.replace(",0,0,Default", ",1,0,Default").toByteArray(),
+                9_000_000L to event.replace(",0,0,Default", ",2,0,Default").toByteArray(),
+            ))
+            renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+            renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), stream, 8_000_000, false, true,
+                0, 0, MediaSource.MediaPeriodId(Any()))
+            stream.seekToSample(1)
+            renderer.start()
+            try {
+                renderer.render(8_000_000, 0)
+                assertTrue(started.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                renderer.syncOffsetMilliseconds = if (forward) 5000 else 0
+                stream.seekToSample(if (forward) 2 else 0)
+                renderer.resetPosition(if (forward) 10_000_000 else 0, true)
+                proceed.countDown()
+                renderUntil(renderer, if (forward) 13_000_000 else 2_000_000) { cues.isNotEmpty() }
+            } finally {
+                proceed.countDown()
+                renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+            }
         }
     }
 
