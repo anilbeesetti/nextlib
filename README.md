@@ -147,6 +147,8 @@ canvas dimensions to 4096. VobSub without codec-private dimensions assumes a 720
 PAL canvas; provide explicit dimensions for other layouts. Sparse bitmap packets discarded from the playback buffer
 cannot be recovered by the renderer alone; selecting a DVB track after playback has
 advanced may require waiting for the next cue or reopening with the track selected.
+Moving subtitle time backwards with delay/speed controls cannot restore bitmap packets
+already replaced by later cues; seek to reload them from the source.
 
 To run the subtitle regressions on an already booted disposable emulator (requires
 host FFmpeg and Python 3):

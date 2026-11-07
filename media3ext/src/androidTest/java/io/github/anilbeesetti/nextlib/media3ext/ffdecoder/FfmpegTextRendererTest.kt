@@ -508,6 +508,40 @@ class FfmpegTextRendererTest {
     }
 
     @Test fun bufferedSeekDuringInitializationRetainsConsumedAssSample() {
+        for (delayMs in listOf(0L, 5000L)) {
+            val started = java.util.concurrent.CountDownLatch(1)
+            val proceed = java.util.concurrent.CountDownLatch(1)
+            var cues = emptyList<Cue>()
+            val renderer = FfmpegTextRenderer(context, object : TextOutput {
+                override fun onCues(cueGroup: CueGroup) { cues = cueGroup.cues }
+            }, null) { format ->
+                started.countDown()
+                check(proceed.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                FfmpegSubtitleDecoder(context, format, null)
+            }
+            renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
+            val format = ass.buildUpon().setSubsampleOffsetUs(0).build()
+            renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), OneSampleStream(format, asset("styled.ass")),
+                0, false, true, 0, 0, MediaSource.MediaPeriodId(Any()))
+            renderer.start()
+            try {
+                renderer.render(2_000_000, 0)
+                assertTrue(started.await(10, java.util.concurrent.TimeUnit.SECONDS))
+                renderer.syncOffsetMilliseconds = delayMs
+                renderer.resetPosition(3_000_000, true)
+                proceed.countDown()
+                renderUntil(renderer, 3_000_000 + delayMs * 1000) { cues.isNotEmpty() }
+                renderer.resetPosition(7_500_000 + delayMs * 1000, true)
+                renderer.render(7_500_000 + delayMs * 1000, 0)
+                assertTrue("The retained script must still clear cue gaps", cues.isEmpty())
+            } finally {
+                proceed.countDown()
+                renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
+            }
+        }
+    }
+
+    @Test fun backwardSeekDuringInitializationDoesNotBlockEarlierEmbeddedAss() {
         val started = java.util.concurrent.CountDownLatch(1)
         val proceed = java.util.concurrent.CountDownLatch(1)
         var cues = emptyList<Cue>()
@@ -518,20 +552,25 @@ class FfmpegTextRendererTest {
             check(proceed.await(10, java.util.concurrent.TimeUnit.SECONDS))
             FfmpegSubtitleDecoder(context, format, null)
         }
+        val header = asset("styled.ass").toString(Charsets.UTF_8).substringBefore("Dialogue:").toByteArray()
+        val format = ass.buildUpon().setInitializationData(listOf(byteArrayOf(), header)).build()
+        val event = "Dialogue: 0:00:00:00,0:00:04:00,0,0,Default,,0,0,0,,Early cue"
+        val stream = OneSampleStream(format, event.toByteArray(), listOf(
+            1_000_000L to event.toByteArray(),
+            8_000_000L to event.replace(",0,0,Default", ",1,0,Default").toByteArray(),
+        ))
         renderer.init(0, PlayerId.UNSET, Clock.DEFAULT)
-        val format = ass.buildUpon().setSubsampleOffsetUs(0).build()
-        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), OneSampleStream(format, asset("styled.ass")),
-            0, false, true, 0, 0, MediaSource.MediaPeriodId(Any()))
+        renderer.enable(RendererConfiguration.DEFAULT, arrayOf(format), stream, 8_000_000, false, true,
+            0, 0, MediaSource.MediaPeriodId(Any()))
+        stream.seekToSample(1)
         renderer.start()
         try {
-            renderer.render(2_000_000, 0)
+            renderer.render(8_000_000, 0)
             assertTrue(started.await(10, java.util.concurrent.TimeUnit.SECONDS))
-            renderer.resetPosition(3_000_000, true)
+            stream.rewind(skipFormat = true)
+            renderer.resetPosition(0, true)
             proceed.countDown()
-            renderUntil(renderer, 3_000_000) { cues.isNotEmpty() }
-            renderer.resetPosition(7_500_000, true)
-            renderer.render(7_500_000, 0)
-            assertTrue("The retained script must still clear cue gaps", cues.isEmpty())
+            renderUntil(renderer, 2_000_000) { cues.isNotEmpty() }
         } finally {
             proceed.countDown()
             renderer.stop(); renderer.disable(); renderer.reset(); renderer.release()
@@ -586,6 +625,7 @@ class FfmpegTextRendererTest {
     private class OneSampleStream(val format: Format, val bytes: ByteArray,
         val samples: List<Pair<Long, ByteArray>> = listOf(0L to bytes)) : SampleStream {
         private var state = 0
+        fun seekToSample(index: Int) { state = index + 1 }
         fun rewind(skipFormat: Boolean = false) { state = if (skipFormat) 1 else 0 }
         override fun isReady() = true
         override fun maybeThrowError() = Unit

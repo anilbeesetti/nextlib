@@ -234,6 +234,8 @@ extern "C" JNIEXPORT jobject JNICALL
 JNI_METHOD(nativeRender)(JNIEnv *env, jobject, jlong handle, jlong time, jint width, jint height, jintArray frame) try {
     auto *context = reinterpret_cast<TextContext *>(handle);
     jint info[7] = {};
+    if (env->GetArrayLength(frame) < 7) return nullptr;
+    env->SetIntArrayRegion(frame, 0, 7, info);
     if (!context || width <= 0 || height <= 0 || width > MAX_DIMENSION || height > MAX_DIMENSION ||
         env->GetArrayLength(frame) < 7) return nullptr;
     ASS_Image *images = nullptr;
@@ -251,6 +253,7 @@ JNI_METHOD(nativeRender)(JNIEnv *env, jobject, jlong handle, jlong time, jint wi
         changed |= assChanged != 0;
     } else {
         if (context->current && context->current->start > time) {
+            // shortcut: older replaced packets need a source seek; retain history if arbitrary timing rewind is required.
             // Timing controls can move subtitle time behind the currently displayed packet.
             auto position = std::upper_bound(context->pending.begin(), context->pending.end(), context->current->start,
                     [](int64_t start, const std::unique_ptr<BitmapSubtitle> &item) { return start < item->start; });

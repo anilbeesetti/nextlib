@@ -117,7 +117,12 @@ class FfmpegTextRenderer private constructor(private val renderer: NativeRendere
             val bitmapCovered = targetUs >= lastRenderedPositionUs &&
                 (inputEnded || (pending && targetUs <= input.timeUs) || targetUs == lastRenderedPositionUs)
             if (format?.sampleMimeType == MimeTypes.TEXT_SSA && initialization != null) {
-                // A buffered seek may not resend the script held during background font setup.
+                // Retain consumed scripts, but let the source resend packets ahead of a backward seek.
+                val embeddedAss = format?.initializationData?.getOrNull(1)?.isNotEmpty() == true
+                if (embeddedAss && pending && input.timeUs > targetUs) {
+                    input.clear()
+                    pending = false
+                }
                 inputEnded = false
                 outputEnded = false
             } else if (decoder != null && (format?.sampleMimeType == MimeTypes.TEXT_SSA || bitmapCovered)) {
