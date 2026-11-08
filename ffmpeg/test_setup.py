@@ -1,5 +1,7 @@
 """Run with python3 ffmpeg/test_setup.py; no SDK downloads or native compilation."""
 import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+import threading
 from pathlib import Path
 import shutil
 import subprocess
@@ -75,6 +77,39 @@ with tempfile.TemporaryDirectory(prefix='nextlib setup ') as temp:
     assert result.returncode == 42 and source.is_dir(), result
     assert 'https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-3.6.7/mbedtls-3.6.7.tar.bz2' in log.read_text().splitlines()
     assert not list((ffmpeg / 'sources').glob('.download.*'))
+
+    # Real curl must recover from a dropped transfer and discard partial output.
+    real_curl = shutil.which('curl')
+    class DownloadHandler(BaseHTTPRequestHandler):
+        attempts = 0
+
+        def do_GET(self):
+            type(self).attempts += 1
+            payload = archive.read_bytes()
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload[:10] if self.attempts == 1 else payload)
+            self.close_connection = True
+
+        def log_message(self, *args):
+            pass
+
+    with HTTPServer(('127.0.0.1', 0), DownloadHandler) as server:
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        try:
+            shutil.rmtree(source)
+            executable(root / 'bin/curl',
+                       'exec "$REAL_CURL" "${@:1:$#-3}" "http://127.0.0.1:$TEST_PORT/source" -o "${@: -1}"\n')
+            env.update(REAL_CURL=real_curl, TEST_PORT=str(server.server_port))
+            result = run()
+            assert result.returncode == 42 and source.is_dir(), result
+            assert DownloadHandler.attempts == 2
+            assert not list((ffmpeg / 'sources').glob('.download.*'))
+        finally:
+            server.shutdown()
+            worker.join()
 
     # Exercise dav1d's cross-build and FFmpeg's target-only dependency discovery.
     executable(cmake, 'exit 0\n')
