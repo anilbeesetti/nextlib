@@ -65,7 +65,7 @@ downloadSource() (
   destination=$2
   staging=$(mktemp -d "$SOURCES_DIR/.download.XXXXXX")
   trap 'rm -rf "$staging"' EXIT
-  curl --fail --location --retry 3 "$1" -o "$staging/source.tar"
+  curl --fail --location --retry 3 --retry-all-errors "$1" -o "$staging/source.tar"
   tar -xf "$staging/source.tar" -C "$staging"
   mv "$staging/$(basename "$destination")" "$destination"
 )
