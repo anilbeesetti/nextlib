@@ -2,9 +2,13 @@ package io.github.anilbeesetti.nextlib.media3ext.renderer
 
 import android.os.Looper
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.Renderer
+import androidx.media3.exoplayer.RendererConfiguration
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.SampleStream
 import androidx.media3.exoplayer.text.SubtitleDecoderFactory
 import androidx.media3.exoplayer.text.TextOutput
 import androidx.media3.exoplayer.text.TextRenderer
@@ -18,8 +22,24 @@ class NextTextRenderer(
 ): Renderer by delegate, OffsetRenderer() {
 
     override fun render(positionUs: Long, elapsedRealtimeUs: Long) {
-        val finalPositionUs = getOffsetAdjustedPositionUs(positionUs)
+        val finalPositionUs = getOffsetAdjustedPositionUs(positionUs - streamOffsetUs) + streamOffsetUs
         delegate.render(finalPositionUs, elapsedRealtimeUs)
+    }
+
+    private var streamOffsetUs = 0L
+
+    override fun enable(configuration: RendererConfiguration, formats: Array<Format>, stream: SampleStream,
+        positionUs: Long, joining: Boolean, mayRenderStartOfStream: Boolean, startPositionUs: Long,
+        offsetUs: Long, mediaPeriodId: MediaSource.MediaPeriodId) {
+        streamOffsetUs = offsetUs
+        delegate.enable(configuration, formats, stream, positionUs, joining, mayRenderStartOfStream,
+            startPositionUs, offsetUs, mediaPeriodId)
+    }
+
+    override fun replaceStream(formats: Array<Format>, stream: SampleStream,
+        startPositionUs: Long, offsetUs: Long, mediaPeriodId: MediaSource.MediaPeriodId) {
+        streamOffsetUs = offsetUs
+        delegate.replaceStream(formats, stream, startPositionUs, offsetUs, mediaPeriodId)
     }
 
     override fun release() {
@@ -80,8 +100,11 @@ var ExoPlayer.subtitleDelayMilliseconds: Long
         return textRenderer.syncOffsetMilliseconds
     }
     set(value) {
-        val textRenderer = getOffsetRenderer(C.TRACK_TYPE_TEXT) ?: return
-        textRenderer.syncOffsetMilliseconds = value
+        for (i in 0 until rendererCount) {
+            if (getRendererType(i) == C.TRACK_TYPE_TEXT) {
+                (getRenderer(i) as? OffsetRenderer)?.syncOffsetMilliseconds = value
+            }
+        }
     }
 
 /**
@@ -177,6 +200,9 @@ var ExoPlayer.subtitleSpeed: Float
         return textRenderer.syncSpeedMultiplier
     }
     set(value) {
-        val textRenderer = getOffsetRenderer(C.TRACK_TYPE_TEXT) ?: return
-        textRenderer.syncSpeedMultiplier = value
+        for (i in 0 until rendererCount) {
+            if (getRendererType(i) == C.TRACK_TYPE_TEXT) {
+                (getRenderer(i) as? OffsetRenderer)?.syncSpeedMultiplier = value
+            }
+        }
     }

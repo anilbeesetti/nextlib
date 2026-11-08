@@ -3,7 +3,6 @@ package io.github.anilbeesetti.nextlib.media3ext.ffdecoder;
 import android.content.Context;
 import android.os.Handler;
 import androidx.media3.common.util.UnstableApi;
-import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.Renderer;
 import androidx.media3.exoplayer.audio.AudioRendererEventListener;
 import androidx.media3.exoplayer.audio.AudioSink;
@@ -13,7 +12,7 @@ import androidx.media3.exoplayer.video.VideoRendererEventListener;
 import java.util.ArrayList;
 
 @UnstableApi
-public class FFmpegOnlyRenderersFactory extends DefaultRenderersFactory {
+public class FFmpegOnlyRenderersFactory extends NextRenderersFactory {
 
     public FFmpegOnlyRenderersFactory(Context context) {
         super(context);
