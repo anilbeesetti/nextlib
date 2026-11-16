@@ -86,36 +86,13 @@ private class FfmpegSubtitleSourceFactory(
         val merged = MergingMediaSource(*sources.toTypedArray())
         val source = if (mediaItem.clippingConfiguration == MediaItem.ClippingConfiguration.UNSET) merged else
             ClippingMediaSource.Builder(merged).setClippingConfiguration(mediaItem.clippingConfiguration).build()
-        return object : WrappingMediaSource(source) {
-            private var currentItem = mediaItem
-            private var childTimeline: Timeline? = null
-            override fun getMediaItem() = currentItem
-            override fun canUpdateMediaItem(updated: MediaItem): Boolean =
-                updated.localConfiguration == currentItem.localConfiguration &&
-                    updated.clippingConfiguration == currentItem.clippingConfiguration &&
-                    updated.liveConfiguration == currentItem.liveConfiguration
-
-            override fun updateMediaItem(updated: MediaItem) {
-                // Metadata-only updates must not recreate periods (NextPlayer updates track metadata).
-                currentItem = updated
-                childTimeline?.let { onChildSourceInfoRefreshed(it) }
-            }
-
-            override fun onChildSourceInfoRefreshed(timeline: Timeline) {
-                childTimeline = timeline
-                val item = currentItem
-                refreshSourceInfo(object : ForwardingTimeline(timeline) {
-                    override fun getWindow(index: Int, window: Timeline.Window, projectionUs: Long): Timeline.Window =
-                        super.getWindow(index, window, projectionUs).apply { this.mediaItem = item }
-                })
-            }
-        }
+        return source.withPublicMediaItem(mediaItem)
     }
 }
 
 /** One seekable sample containing the script; libass owns its event timeline. */
 @UnstableApi
-private class AssFileExtractor(val format: Format) : Extractor {
+internal class AssFileExtractor(val format: Format) : Extractor {
     private lateinit var track: TrackOutput
     private lateinit var output: ExtractorOutput
     private val script = ByteArrayOutputStream()
@@ -156,4 +133,32 @@ private class AssFileExtractor(val format: Format) : Extractor {
     override fun release() = Unit
 
     companion object { private const val MAX_SCRIPT_BYTES = 16 * 1024 * 1024 }
+}
+
+@UnstableApi
+internal fun MediaSource.withPublicMediaItem(mediaItem: MediaItem): MediaSource {
+    return object : WrappingMediaSource(this) {
+            private var currentItem = mediaItem
+            private var childTimeline: Timeline? = null
+            override fun getMediaItem() = currentItem
+            override fun canUpdateMediaItem(updated: MediaItem): Boolean =
+                updated.localConfiguration == currentItem.localConfiguration &&
+                    updated.clippingConfiguration == currentItem.clippingConfiguration &&
+                    updated.liveConfiguration == currentItem.liveConfiguration
+
+            override fun updateMediaItem(updated: MediaItem) {
+                // Metadata-only updates must not recreate periods (NextPlayer updates track metadata).
+                currentItem = updated
+                childTimeline?.let { onChildSourceInfoRefreshed(it) }
+            }
+
+            override fun onChildSourceInfoRefreshed(timeline: Timeline) {
+                childTimeline = timeline
+                val item = currentItem
+                refreshSourceInfo(object : ForwardingTimeline(timeline) {
+                    override fun getWindow(index: Int, window: Timeline.Window, projectionUs: Long): Timeline.Window =
+                        super.getWindow(index, window, projectionUs).apply { this.mediaItem = item }
+                })
+            }
+        }
 }

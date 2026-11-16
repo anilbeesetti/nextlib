@@ -19,7 +19,7 @@ set(
         # List variable name
         ffmpeg_libs_names
         # Values in the list
-        avutil avcodec swresample swscale ass)
+        avutil avcodec avformat swresample swscale ass)
 
 foreach (ffmpeg_lib_name ${ffmpeg_libs_names})
     add_library(
@@ -39,7 +39,8 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
         ffcommon.cpp
         ffaudio.cpp
         ffvideo.cpp
-        fftext.cpp)
+        fftext.cpp
+        ffextractor.cpp)
 
 set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
 
