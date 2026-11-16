@@ -53,6 +53,15 @@ This controls renderer priority and capability fallback: `ON` allows FFmpeg when
 renderers cannot support a format. It does not automatically recover from runtime decoder failures;
 applications own error recovery.
 
+## Metadata and thumbnails
+
+`MediaInfoBuilder.from(descriptor)` and `MediaThumbnailRetriever.setDataSource(descriptor)`
+read an owned duplicate with seekable AVIO, without reopening the MediaStore path. Callers
+can close their descriptor after setup, then release the metadata or retriever when done.
+`MediaThumbnailRetriever.durationMillis` supplies the duration when Android's retriever
+cannot open the container; unknown durations are zero. Thumbnail timestamps are relative
+to the start of the video, including containers with nonzero stream timestamps.
+
 ## Subtitles
 
 Configure the media source and renderers together. Native subtitle routing is independent

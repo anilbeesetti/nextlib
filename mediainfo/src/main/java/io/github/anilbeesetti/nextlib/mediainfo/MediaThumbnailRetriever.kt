@@ -55,6 +55,10 @@ class MediaThumbnailRetriever : Closeable {
         return nativeGetEmbeddedPicture(handle)
     }
 
+    /** Container duration in milliseconds, or zero when unknown. */
+    val durationMillis: Long
+        get() = nativeGetDurationMillis(requireHandle())
+
     /**
      * Returns a frame at [timeUs] microseconds
      */
@@ -111,6 +115,10 @@ class MediaThumbnailRetriever : Closeable {
         @Keep
         @JvmStatic
         private external fun nativeGetEmbeddedPicture(handle: Long): ByteArray?
+
+        @Keep
+        @JvmStatic
+        private external fun nativeGetDurationMillis(handle: Long): Long
 
         @Keep
         @JvmStatic

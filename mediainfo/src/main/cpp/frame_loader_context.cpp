@@ -1,4 +1,5 @@
 #include "frame_loader_context.h"
+#include "utils.h"
 
 FrameLoaderContext *frame_loader_context_from_handle(int64_t handle) {
     return reinterpret_cast<FrameLoaderContext *>(handle);
@@ -12,6 +13,6 @@ void frame_loader_context_free(int64_t handle) {
     auto *frameLoaderContext = frame_loader_context_from_handle(handle);
     auto *avFormatContext = frameLoaderContext->avFormatContext;
 
-    avformat_close_input(&avFormatContext);
+    media_input_close(&avFormatContext);
     free(frameLoaderContext);
 }

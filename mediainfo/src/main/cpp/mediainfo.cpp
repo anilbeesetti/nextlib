@@ -34,7 +34,8 @@ static void onError(JNIEnv *env, jobject jMediaInfoBuilder) {
 void onMediaInfoFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext) {
     const char *fileFormatName = avFormatContext->iformat->long_name;
 
-    long duration_ms = (long) (avFormatContext->duration * av_q2d(AV_TIME_BASE_Q) * 1000.0);
+    jlong duration_ms = avFormatContext->duration <= 0 ? 0
+            : av_rescale_q(avFormatContext->duration, AV_TIME_BASE_Q, AVRational{1, 1000});
     jstring jFileFormatName = env->NewStringUTF(fileFormatName);
 
     utils_call_instance_method_void(env,
@@ -44,7 +45,7 @@ void onMediaInfoFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *a
                                     duration_ms);
 }
 
-void onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext,
+bool onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext,
                         int index) {
     AVStream *stream = avFormatContext->streams[index];
     AVCodecParameters *parameters = stream->codecpar;
@@ -109,6 +110,7 @@ void onVideoStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext 
                                     parameters->height,
                                     rotation,
                                     frameLoaderContextHandle);
+    return frameLoaderContextHandle != -1;
 }
 
 void onAudioStreamFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avFormatContext,
@@ -193,16 +195,16 @@ void onChapterFound(JNIEnv *env, jobject jMediaInfoBuilder, AVFormatContext *avF
                                     end_ms);
 }
 
-void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
+void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri, int descriptor = -1) {
     AVFormatContext *avFormatContext = nullptr;
-    if (int result = avformat_open_input(&avFormatContext, uri, nullptr, nullptr)) {
+    if (int result = media_input_open(&avFormatContext, uri, descriptor)) {
         LOGE("ERROR Could not open file %s - %s", uri, av_err2str(result));
         onError(env, jMediaInfoBuilder);
         return;
     }
 
     if (avformat_find_stream_info(avFormatContext, nullptr) < 0) {
-        avformat_free_context(avFormatContext);
+        media_input_close(&avFormatContext);
         LOGE("ERROR Could not get the stream info");
         onError(env, jMediaInfoBuilder);
         return;
@@ -210,12 +212,17 @@ void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
 
     onMediaInfoFound(env, jMediaInfoBuilder, avFormatContext);
 
+    bool videoReported = false;
+    bool contextRetained = false;
     for (int pos = 0; pos < avFormatContext->nb_streams; pos++) {
         AVCodecParameters *parameters = avFormatContext->streams[pos]->codecpar;
         AVMediaType type = parameters->codec_type;
         switch (type) {
             case AVMEDIA_TYPE_VIDEO:
-                onVideoStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
+                if (!videoReported) {
+                    contextRetained = onVideoStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
+                    videoReported = true;
+                }
                 break;
             case AVMEDIA_TYPE_AUDIO:
                 onAudioStreamFound(env, jMediaInfoBuilder, avFormatContext, pos);
@@ -229,6 +236,7 @@ void media_info_build(JNIEnv *env, jobject jMediaInfoBuilder, const char *uri) {
     for (int pos = 0; pos < avFormatContext->nb_chapters; pos++) {
         onChapterFound(env, jMediaInfoBuilder, avFormatContext, pos);
     }
+    if (!contextRetained) media_input_close(&avFormatContext);
 }
 
 extern "C"
@@ -236,10 +244,7 @@ JNIEXPORT void JNICALL
 Java_io_github_anilbeesetti_nextlib_mediainfo_MediaInfoBuilder_nativeCreateFromFD(JNIEnv *env,
                                                                                   jobject thiz,
                                                                                   jint file_descriptor) {
-    char pipe[32];
-    sprintf(pipe, "pipe:%d", file_descriptor);
-
-    media_info_build(env, thiz, pipe);
+    media_info_build(env, thiz, "descriptor", file_descriptor);
 }
 
 extern "C"

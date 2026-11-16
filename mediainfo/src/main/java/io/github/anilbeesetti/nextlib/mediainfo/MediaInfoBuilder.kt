@@ -37,8 +37,7 @@ class MediaInfoBuilder {
                     from(path)
                 } else {
                     try {
-                        val descriptor = context.contentResolver.openFileDescriptor(uri, "r")
-                        if (descriptor != null) {
+                        context.contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
                             from(descriptor)
                         }
                     } catch (e: FileNotFoundException) {

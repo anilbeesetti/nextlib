@@ -7,6 +7,10 @@
 
 #include <jni.h>
 
+struct AVFormatContext;
+int media_input_open(AVFormatContext **context, const char *source, int descriptor = -1);
+void media_input_close(AVFormatContext **context);
+
 /**
  * Initializes the fields struct that keeps handles to MediaFile's internal fields in order to read/write to them.
  */
