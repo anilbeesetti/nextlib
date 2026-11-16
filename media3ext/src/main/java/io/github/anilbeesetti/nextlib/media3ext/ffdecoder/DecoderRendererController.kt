@@ -93,6 +93,7 @@ internal class DecoderMediaCodecSelector(
         }
         return when (mode) {
             DecoderMode.AUTO -> decoderInfos.sortedBy(MediaCodecInfo::decoderPriority)
+            DecoderMode.SYSTEM -> decoderInfos
             DecoderMode.HARDWARE -> decoderInfos.filter(MediaCodecInfo::hardwareAccelerated)
             DecoderMode.SOFTWARE -> decoderInfos.filter(MediaCodecInfo::softwareOnly)
             DecoderMode.FFMPEG -> emptyList()

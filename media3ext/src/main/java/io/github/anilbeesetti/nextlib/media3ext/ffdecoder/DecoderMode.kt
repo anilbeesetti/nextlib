@@ -8,6 +8,9 @@ enum class DecoderMode {
     /** Uses only MediaCodec decoders that Media3 identifies as hardware accelerated. */
     HARDWARE,
 
+    /** Uses Android MediaCodec decoders, including software implementations. */
+    SYSTEM,
+
     /** Uses only MediaCodec decoders that Media3 identifies as software-only. */
     SOFTWARE,
 

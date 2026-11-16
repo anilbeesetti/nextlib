@@ -257,3 +257,9 @@ checks and tested device coverage.
 
 See [FFmpeg and mbedTLS upgrade verification](ffmpeg/UPGRADE_VERIFICATION.md) for
 the current dependency build, TLS, rotation metadata, and playback checks.
+
+## FFmpeg container compatibility
+
+Use `FfmpegMediaSourceFactory` for clear progressive media that needs libavformat
+probing/extraction, while retaining Media3's system or NextLib software renderers.
+See [the extraction contract and verification](media3ext/FFMPEG_EXTRACTION.md).
