@@ -10,6 +10,7 @@ extern "C" {
 #include <jni.h>
 #include <cstdio>
 #include <cstdlib>
+#include "utils.h"
 
 struct MediaThumbnailRetrieverContext {
     AVFormatContext *formatContext;
@@ -196,35 +197,26 @@ static bool decode_next_frame(MediaThumbnailRetrieverContext *context,
         AVCodecContext *codecContext,
         AVPacket *packet,
         AVFrame *frame) {
-    while (av_read_frame(context->formatContext, packet) >= 0) {
-        if (packet->stream_index != context->videoStreamIndex) {
+    for (;;) {
+        int receiveResult = avcodec_receive_frame(codecContext, frame);
+        if (receiveResult >= 0) return true;
+        if (receiveResult != AVERROR(EAGAIN)) return false;
+
+        int readResult;
+        while ((readResult = av_read_frame(context->formatContext, packet)) >= 0 &&
+               packet->stream_index != context->videoStreamIndex) {
             av_packet_unref(packet);
-            continue;
+        }
+        if (readResult < 0) {
+            avcodec_send_packet(codecContext, nullptr);
+            return avcodec_receive_frame(codecContext, frame) >= 0;
         }
 
         int sendResult = avcodec_send_packet(codecContext, packet);
         av_packet_unref(packet);
-        if (sendResult < 0) {
-            return false;
-        }
-
-        int receiveResult = avcodec_receive_frame(codecContext, frame);
-        if (receiveResult == AVERROR(EAGAIN) || receiveResult == AVERROR_EOF) {
-            continue;
-        }
-        if (receiveResult < 0) {
-            return false;
-        }
-
-        return true;
+        // A seek can land before a usable keyframe; let the decoder resynchronize.
+        if (sendResult < 0 && sendResult != AVERROR_INVALIDDATA) return false;
     }
-
-    avcodec_send_packet(codecContext, nullptr);
-    if (avcodec_receive_frame(codecContext, frame) >= 0) {
-        return true;
-    }
-
-    return false;
 }
 
 static jobject decode_frame_at_time(JNIEnv *env, MediaThumbnailRetrieverContext *context, int64_t timeUs) {
@@ -234,7 +226,12 @@ static jobject decode_frame_at_time(JNIEnv *env, MediaThumbnailRetrieverContext 
     }
 
     AVStream *videoStream = context->formatContext->streams[context->videoStreamIndex];
-    int64_t targetTimestamp = av_rescale_q(timeUs, AV_TIME_BASE_Q, videoStream->time_base);
+    int64_t startUs = context->formatContext->start_time == AV_NOPTS_VALUE ? 0 : context->formatContext->start_time;
+    if (startUs > 0 && timeUs > INT64_MAX - startUs) {
+        avcodec_free_context(&codecContext);
+        return nullptr;
+    }
+    int64_t targetTimestamp = av_rescale_q(timeUs + startUs, AV_TIME_BASE_Q, videoStream->time_base);
     int seekResult = av_seek_frame(context->formatContext, context->videoStreamIndex, targetTimestamp, AVSEEK_FLAG_BACKWARD);
     if (seekResult < 0) {
         // Failed to seek to the requested timestamp; clean up and return null.
@@ -270,7 +267,9 @@ static jobject decode_frame_at_index(JNIEnv *env, MediaThumbnailRetrieverContext
         return nullptr;
     }
 
-    int seekResult = av_seek_frame(context->formatContext, context->videoStreamIndex, 0, AVSEEK_FLAG_BACKWARD);
+    AVStream *stream = context->formatContext->streams[context->videoStreamIndex];
+    int64_t start = stream->start_time == AV_NOPTS_VALUE ? 0 : stream->start_time;
+    int seekResult = av_seek_frame(context->formatContext, context->videoStreamIndex, start, AVSEEK_FLAG_BACKWARD);
     if (seekResult < 0) {
         avcodec_free_context(&codecContext);
         return nullptr;
@@ -305,14 +304,14 @@ static jobject decode_frame_at_index(JNIEnv *env, MediaThumbnailRetrieverContext
     return result;
 }
 
-static jlong create_context_from_source(const char *source) {
+static jlong create_context_from_source(const char *source, int descriptor = -1) {
     AVFormatContext *formatContext = nullptr;
-    if (!source || avformat_open_input(&formatContext, source, nullptr, nullptr) < 0) {
+    if (media_input_open(&formatContext, source, descriptor) < 0) {
         return 0;
     }
 
     if (avformat_find_stream_info(formatContext, nullptr) < 0) {
-        avformat_close_input(&formatContext);
+        media_input_close(&formatContext);
         return 0;
     }
 
@@ -338,7 +337,7 @@ static jlong create_context_from_source(const char *source) {
 
     auto *context = reinterpret_cast<MediaThumbnailRetrieverContext *>(malloc(sizeof(MediaThumbnailRetrieverContext)));
     if (!context) {
-        avformat_close_input(&formatContext);
+        media_input_close(&formatContext);
         return 0;
     }
 
@@ -368,9 +367,16 @@ Java_io_github_anilbeesetti_nextlib_mediainfo_MediaThumbnailRetriever_nativeCrea
         JNIEnv *env,
         jobject thiz,
         jint file_descriptor) {
-    char fdPath[64];
-    snprintf(fdPath, sizeof(fdPath), "/proc/self/fd/%d", file_descriptor);
-    return create_context_from_source(fdPath);
+    return create_context_from_source(nullptr, file_descriptor);
+}
+
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_io_github_anilbeesetti_nextlib_mediainfo_MediaThumbnailRetriever_nativeGetDurationMillis(
+        JNIEnv *, jobject, jlong handle) {
+    auto *context = context_from_handle(handle);
+    int64_t duration = context->formatContext->duration;
+    return duration <= 0 ? 0 : av_rescale_q(duration, AV_TIME_BASE_Q, AVRational{1, 1000});
 }
 
 extern "C"
@@ -465,7 +471,7 @@ Java_io_github_anilbeesetti_nextlib_mediainfo_MediaThumbnailRetriever_nativeRele
     }
 
     if (context->formatContext) {
-        avformat_close_input(&context->formatContext);
+        media_input_close(&context->formatContext);
     }
 
     free(context);
