@@ -41,7 +41,7 @@ static jmethodID growOutputBufferMethod;
  */
 AVCodecContext *createContext(JNIEnv *env, AVCodec *codec, jbyteArray extraData,
                               jboolean outputFloat, jint rawSampleRate,
-                              jint rawChannelCount);
+                              jint rawChannelCount, jint bitRate, jint blockAlign);
 
 /**
  * Decodes the packet into the output buffer, returning the number of bytes
@@ -76,7 +76,7 @@ uint8_t *GrowOutputBufferCallback::operator()(int requiredSize) const {
 
 AVCodecContext *createContext(JNIEnv *env, AVCodec *codec, jbyteArray extraData,
                               jboolean outputFloat, jint rawSampleRate,
-                              jint rawChannelCount) {
+                              jint rawChannelCount, jint bitRate, jint blockAlign) {
     AVCodecContext *context = avcodec_alloc_context3(codec);
     if (!context) {
         LOGE("Failed to allocate context.");
@@ -88,7 +88,7 @@ AVCodecContext *createContext(JNIEnv *env, AVCodec *codec, jbyteArray extraData,
         jsize size = env->GetArrayLength(extraData);
         context->extradata_size = size;
         context->extradata =
-                (uint8_t *) av_malloc(size + AV_INPUT_BUFFER_PADDING_SIZE);
+                (uint8_t *) av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE);
         if (!context->extradata) {
             LOGE("Failed to allocate extra data.");
             releaseContext(context);
@@ -96,12 +96,13 @@ AVCodecContext *createContext(JNIEnv *env, AVCodec *codec, jbyteArray extraData,
         }
         env->GetByteArrayRegion(extraData, 0, size, (jbyte *) context->extradata);
     }
-    if (context->codec_id == AV_CODEC_ID_PCM_MULAW ||
-        context->codec_id == AV_CODEC_ID_PCM_ALAW) {
+    if (rawSampleRate > 0 && rawChannelCount > 0) {
         context->sample_rate = rawSampleRate;
         context->ch_layout.nb_channels = rawChannelCount;
         av_channel_layout_default(&context->ch_layout, rawChannelCount);
     }
+    if (bitRate > 0) context->bit_rate = bitRate;
+    if (blockAlign > 0) context->block_align = blockAlign;
     context->err_recognition = AV_EF_IGNORE_ERR;
     int result = avcodec_open2(context, codec, nullptr);
     if (result < 0) {
@@ -218,7 +219,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegAudioDecoder_ffmpe
                                                                         jbyteArray extra_data,
                                                                         jboolean output_float,
                                                                         jint raw_sample_rate,
-                                                                        jint raw_channel_count) {
+                                                                        jint raw_channel_count, jint bit_rate, jint block_align) {
     AVCodec *codec = getCodecByName(env, codec_name);
     if (!codec) {
         LOGE("Codec not found.");
@@ -227,7 +228,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegAudioDecoder_ffmpe
     jclass clazz = env->FindClass("io/github/anilbeesetti/nextlib/media3ext/ffdecoder/FfmpegAudioDecoder");
     growOutputBufferMethod = env->GetMethodID(clazz, "growOutputBuffer","(Landroidx/media3/decoder/SimpleDecoderOutputBuffer;I)Ljava/nio/ByteBuffer;");
     return (jlong) createContext(env, codec, extra_data, output_float, raw_sample_rate,
-                                 raw_channel_count);
+                                 raw_channel_count, bit_rate, block_align);
 }
 
 extern "C"
@@ -323,7 +324,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegAudioDecoder_ffmpe
         }
         return (jlong) createContext(env, codec, extra_data, outputFloat,
                 /* rawSampleRate= */ -1,
-                /* rawChannelCount= */ -1);
+                /* rawChannelCount= */ -1, /* bitRate= */ -1, /* blockAlign= */ 0);
     }
 
     avcodec_flush_buffers(context);

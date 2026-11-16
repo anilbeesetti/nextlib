@@ -106,7 +106,7 @@ internal class FfmpegProgressiveMediaExtractor(
         return if (position == -1L) source.length else source.seek(position)
     }
 
-    private fun onTrack(index: Int, mime: String, width: Int, height: Int, channels: Int, sampleRate: Int, pcmEncoding: Int, selectionFlags: Int, extra: ByteArray, language: String?) {
+    private fun onTrack(index: Int, mime: String, width: Int, height: Int, channels: Int, sampleRate: Int, pcmEncoding: Int, selectionFlags: Int, bitRate: Int, blockAlign: Int, extra: ByteArray, language: String?) {
         if (subtitleRenderingMode == SubtitleRenderingMode.MEDIA3) {
             // These parsers require initialization data, which some containers omit.
             when (mime) {
@@ -142,6 +142,8 @@ internal class FfmpegProgressiveMediaExtractor(
         }
         if (fonts.isNotEmpty()) format.setMetadata(Metadata(*fonts.map { BinaryFrame(MATROSKA_FONT_ID, it) }.toTypedArray()))
         initializationData = when (mime) {
+            // WMA requires the container block alignment as well as codec extra data.
+            "audio/x-ms-wmav2" -> listOf(extra, java.nio.ByteBuffer.allocate(4).putInt(blockAlign).array())
             MimeTypes.AUDIO_OPUS -> {
                 if (extra.size < 19) throw IOException("Truncated Opus header")
                 OpusUtil.buildInitializationData(extra)
@@ -164,7 +166,7 @@ internal class FfmpegProgressiveMediaExtractor(
             else -> C.TRACK_TYPE_TEXT
         }
         if (type == C.TRACK_TYPE_VIDEO) format.setWidth(width).setHeight(height)
-        else if (type == C.TRACK_TYPE_AUDIO) format.setChannelCount(channels).setSampleRate(sampleRate)
+        else if (type == C.TRACK_TYPE_AUDIO) format.setChannelCount(channels).setSampleRate(sampleRate).setAverageBitrate(bitRate)
         val built = format.setInitializationData(initializationData).build()
         formats[index] = built
         tracks[index] = output.track(index, type).also { it.format(built) }

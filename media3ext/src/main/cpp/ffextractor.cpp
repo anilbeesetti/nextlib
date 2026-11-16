@@ -99,12 +99,16 @@ const char *mime(AVCodecID id) {
     switch (id) {
         case AV_CODEC_ID_H264: return "video/avc";
         case AV_CODEC_ID_HEVC: return "video/hevc";
+        case AV_CODEC_ID_MPEG1VIDEO: return "video/mpeg";
+        case AV_CODEC_ID_WMV2: return "video/x-ms-wmv2";
         case AV_CODEC_ID_MPEG2VIDEO: return "video/mpeg2";
         case AV_CODEC_ID_MPEG4: return "video/mp4v-es";
         case AV_CODEC_ID_VP8: return "video/x-vnd.on2.vp8";
         case AV_CODEC_ID_VP9: return "video/x-vnd.on2.vp9";
         case AV_CODEC_ID_AV1: return "video/av01";
         case AV_CODEC_ID_AAC: return "audio/mp4a-latm";
+        case AV_CODEC_ID_WMAV2: return "audio/x-ms-wmav2";
+        case AV_CODEC_ID_PCM_DVD: return "audio/x-pcm-dvd";
         case AV_CODEC_ID_MP3: return "audio/mpeg";
         case AV_CODEC_ID_MP2: return "audio/mpeg-L2";
         case AV_CODEC_ID_OPUS: return "audio/opus";
@@ -192,7 +196,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegProgressiveMediaEx
     d->readInput = env->GetMethodID(cls, "readInput", "([BI)I");
     d->seekInput = env->GetMethodID(cls, "seekInput", "(J)J");
     d->sample = env->GetMethodID(cls, "onSample", "(IJJI[B)V");
-    jmethodID track = env->GetMethodID(cls, "onTrack", "(ILjava/lang/String;IIIIII[BLjava/lang/String;)V");
+    jmethodID track = env->GetMethodID(cls, "onTrack", "(ILjava/lang/String;IIIIIIII[BLjava/lang/String;)V");
     jmethodID videoFormat = env->GetMethodID(cls, "onVideoFormat", "(IIFIII[B)V");
     jmethodID ended = env->GetMethodID(cls, "onTracksEnded", "(JZ)V");
     env->DeleteLocalRef(cls);
@@ -251,7 +255,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegProgressiveMediaEx
         const char *type = mime(p->codec_id);
         if (!type) {
             if (p->codec_type == AVMEDIA_TYPE_AUDIO || p->codec_type == AVMEDIA_TYPE_VIDEO) {
-                fail(env, "Unsupported FFmpeg extraction codec; use the standard reader"); break;
+                fail(env, avcodec_get_name(p->codec_id)); break;
             }
             continue;
         }
@@ -283,7 +287,9 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegProgressiveMediaEx
         env->CallVoidMethod(owner, track, static_cast<jint>(i), jmime, p->width, p->height,
                             p->ch_layout.nb_channels, p->sample_rate, pcm,
                             ((stream->disposition & AV_DISPOSITION_DEFAULT) ? 1 : 0) |
-                            ((stream->disposition & AV_DISPOSITION_FORCED) ? 2 : 0), extra, lang);
+                            ((stream->disposition & AV_DISPOSITION_FORCED) ? 2 : 0),
+                            p->bit_rate > 0 && p->bit_rate <= INT32_MAX ? static_cast<jint>(p->bit_rate) : -1,
+                            p->block_align, extra, lang);
         if (p->codec_type == AVMEDIA_TYPE_VIDEO && !env->ExceptionCheck()) {
             const AVPacketSideData *matrix = av_packet_side_data_get(p->coded_side_data,
                 p->nb_coded_side_data, AV_PKT_DATA_DISPLAYMATRIX);
