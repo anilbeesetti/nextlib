@@ -111,6 +111,7 @@ const char *mime(AVCodecID id) {
         case AV_CODEC_ID_PCM_DVD: return "audio/x-pcm-dvd";
         case AV_CODEC_ID_MP3: return "audio/mpeg";
         case AV_CODEC_ID_MP2: return "audio/mpeg-L2";
+        case AV_CODEC_ID_MP1: return "audio/mpeg-L1";
         case AV_CODEC_ID_OPUS: return "audio/opus";
         case AV_CODEC_ID_VORBIS: return "audio/vorbis";
         case AV_CODEC_ID_FLAC: return "audio/flac";
