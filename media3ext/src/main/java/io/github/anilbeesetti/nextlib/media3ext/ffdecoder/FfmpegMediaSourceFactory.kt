@@ -22,7 +22,11 @@ import java.io.IOException
 /** FFmpeg container extraction feeding the existing Media3 audio/video renderers. */
 @UnstableApi
 class FfmpegMediaSourceFactory(private val dataSources: DataSource.Factory) {
-    fun createMediaSource(item: MediaItem): MediaSource {
+    fun createMediaSource(item: MediaItem): MediaSource =
+        createMediaSource(item, SubtitleRenderingMode.FFMPEG)
+
+    /** Applies [subtitleRenderingMode] to embedded and sidecar subtitles in this source. */
+    fun createMediaSource(item: MediaItem, subtitleRenderingMode: SubtitleRenderingMode): MediaSource {
         require(item.localConfiguration?.drmConfiguration == null) { "FFmpeg extraction does not support DRM" }
         // Media3 1.11 creates the period's DataSource immediately before its extractor, on one thread.
         val pending = ThreadLocal<ReopeningDataSource>()
@@ -36,7 +40,7 @@ class FfmpegMediaSourceFactory(private val dataSources: DataSource.Factory) {
         val video = ProgressiveMediaSource.Factory(factory, ProgressiveMediaExtractor.Factory { _ ->
             val source = checkNotNull(pending.get()) { "FFmpeg extractor requires its loader's reader" }
             pending.remove()
-            FfmpegProgressiveMediaExtractor(source)
+            FfmpegProgressiveMediaExtractor(source, subtitleRenderingMode)
         }).createMediaSource(primary)
         val sources = mutableListOf<MediaSource>(video)
         val parsers = DefaultSubtitleParserFactory()
@@ -45,8 +49,14 @@ class FfmpegMediaSourceFactory(private val dataSources: DataSource.Factory) {
                 .setLanguage(subtitle.language).setLabel(subtitle.label).setSelectionFlags(subtitle.selectionFlags)
                 .setRoleFlags(subtitle.roleFlags).setSubsampleOffsetUs(0).build()
             val extractors = ExtractorsFactory {
-                arrayOf(if (format.sampleMimeType == MimeTypes.TEXT_SSA) AssFileExtractor(format)
-                else SubtitleExtractor(parsers.create(format), format))
+                val extractor = if (subtitleRenderingMode == SubtitleRenderingMode.FFMPEG &&
+                    format.sampleMimeType == MimeTypes.TEXT_SSA
+                ) {
+                    AssFileExtractor(format)
+                } else {
+                    SubtitleExtractor(parsers.create(format), format)
+                }
+                arrayOf(extractor)
             }
             sources += ProgressiveMediaSource.Factory(dataSources, extractors)
                 .createMediaSource(MediaItem.fromUri(subtitle.uri))

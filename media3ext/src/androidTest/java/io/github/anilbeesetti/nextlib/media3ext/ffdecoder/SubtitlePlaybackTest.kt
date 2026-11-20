@@ -11,6 +11,7 @@ import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.common.util.Log
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.test.platform.app.InstrumentationRegistry
@@ -24,6 +25,125 @@ import org.junit.Test
 /** Real extractors, media sources, renderer selection and seek/track lifecycle on an Android device. */
 @UnstableApi
 class SubtitlePlaybackTest {
+    @Test fun missingVobSubInitializationDoesNotPreventPlaybackInMedia3Mode() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.context
+        val prepared = java.util.concurrent.CountDownLatch(1)
+        val error = java.util.concurrent.atomic.AtomicReference<PlaybackException>()
+        lateinit var player: ExoPlayer
+        instrumentation.runOnMainSync {
+            val source = FfmpegMediaSourceFactory(DefaultDataSource.Factory(context)).createMediaSource(
+                item = MediaItem.fromUri("asset:///subtitles/vobsub-no-idx.vob"),
+                subtitleRenderingMode = SubtitleRenderingMode.MEDIA3,
+            )
+            player = ExoPlayer.Builder(context).setRenderersFactory(NextRenderersFactory(context)).build()
+            player.addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    if (state == Player.STATE_READY) prepared.countDown()
+                }
+                override fun onPlayerError(playbackError: PlaybackException) {
+                    error.set(playbackError)
+                    prepared.countDown()
+                }
+            })
+            player.setMediaSource(source)
+            player.prepare()
+        }
+        try {
+            assertTrue("Media failed to prepare", prepared.await(12, TimeUnit.SECONDS))
+            assertNull(error.get())
+            instrumentation.runOnMainSync {
+                assertTrue(player.currentTracks.isTypeSelected(C.TRACK_TYPE_AUDIO))
+                assertFalse(player.currentTracks.containsType(C.TRACK_TYPE_TEXT))
+            }
+        } finally {
+            instrumentation.runOnMainSync { player.release() }
+        }
+    }
+
+    @Test fun ffmpegMediaSourceSelectsSubtitleRenderingPerItem() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.context
+        val sources = FfmpegMediaSourceFactory(DefaultDataSource.Factory(context))
+        val outputs = LinkedBlockingQueue<List<Cue>>()
+        val error = java.util.concurrent.atomic.AtomicReference<PlaybackException>()
+        lateinit var player: ExoPlayer
+        instrumentation.runOnMainSync {
+            player = ExoPlayer.Builder(context).setRenderersFactory(NextRenderersFactory(context)).build()
+            player.addListener(object : Player.Listener {
+                override fun onCues(cueGroup: CueGroup) { outputs.offer(cueGroup.cues) }
+                override fun onPlayerError(playbackError: PlaybackException) { error.set(playbackError) }
+            })
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setPreferredTextLanguage("en").build()
+        }
+        fun awaitCues(description: String, empty: Boolean): List<Cue> {
+            val deadline = SystemClock.elapsedRealtime() + 12_000
+            while (SystemClock.elapsedRealtime() < deadline) {
+                error.get()?.let { throw AssertionError(description, it) }
+                val cues = outputs.poll(250, TimeUnit.MILLISECONDS) ?: continue
+                if (cues.isEmpty() == empty) return cues
+            }
+            throw AssertionError("$description timed out waiting for cues")
+        }
+        val cases = listOf(
+            "styled.ass.mkv" to null,
+            "video.mp4" to "styled.ass",
+            "bitmap.sup.mkv" to null,
+            "vobsub.mkv" to null,
+            "dvb.ts" to null,
+        )
+        try {
+            for ((file, sidecar) in cases) {
+                val item = MediaItem.Builder().setUri("asset:///subtitles/$file").apply {
+                    if (sidecar != null) setSubtitleConfigurations(listOf(
+                        MediaItem.SubtitleConfiguration.Builder(Uri.parse("asset:///subtitles/$sidecar"))
+                            .setMimeType(MimeTypes.TEXT_SSA).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build(),
+                    ))
+                }.build()
+                val isAss = file == "styled.ass.mkv" || sidecar != null
+                val modes = if (isAss) listOf(null, SubtitleRenderingMode.MEDIA3) else listOf(SubtitleRenderingMode.MEDIA3)
+                for (mode in modes) {
+                    val description = "$file with ${mode ?: "the default mode"}"
+                    instrumentation.runOnMainSync {
+                        player.stop()
+                        outputs.clear()
+                        error.set(null)
+                        player.setMediaSource(
+                            if (mode == null) sources.createMediaSource(item)
+                            else sources.createMediaSource(item = item, subtitleRenderingMode = mode),
+                        )
+                        player.prepare()
+                        player.play()
+                    }
+                    val cue = awaitCues(description, empty = false).first()
+                    if (isAss && mode == SubtitleRenderingMode.MEDIA3) {
+                        assertTrue("$description rendered no ASS text", !cue.text.isNullOrBlank())
+                    } else {
+                        assertNotNull("$description rendered no bitmap", cue.bitmap)
+                    }
+                    if (mode == SubtitleRenderingMode.MEDIA3) {
+                        instrumentation.runOnMainSync {
+                            val text = player.currentTracks.groups.single { it.type == C.TRACK_TYPE_TEXT && it.isSelected }
+                            assertEquals(description, MimeTypes.APPLICATION_MEDIA3_CUES, text.getTrackFormat(0).sampleMimeType)
+                            outputs.clear()
+                            player.pause()
+                            player.seekTo(22_000)
+                        }
+                        awaitCues("$description after seeking past subtitles", empty = true)
+                        instrumentation.runOnMainSync {
+                            player.seekTo(0)
+                            player.play()
+                        }
+                        awaitCues("$description after seeking back", empty = false)
+                    }
+                }
+            }
+        } finally {
+            instrumentation.runOnMainSync { player.release() }
+        }
+    }
+
     @Test fun clippedVideoEndsEvenWhenAssScriptContinues() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.context
