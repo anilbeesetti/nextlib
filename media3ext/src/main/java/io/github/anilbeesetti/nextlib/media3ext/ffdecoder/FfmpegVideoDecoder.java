@@ -144,7 +144,7 @@ final class FfmpegVideoDecoder extends
     @Override
     protected VideoDecoderOutputBuffer createOutputBuffer() {
         if (outputBuffers == null) outputBuffers = new ArrayList<>();
-        VideoDecoderOutputBuffer outputBuffer = new VideoDecoderOutputBuffer(this::releaseOutputBuffer);
+        VideoDecoderOutputBuffer outputBuffer = new FfmpegVideoDecoderOutputBuffer(this::releaseOutputBuffer);
         outputBuffers.add(outputBuffer);
         return outputBuffer;
     }

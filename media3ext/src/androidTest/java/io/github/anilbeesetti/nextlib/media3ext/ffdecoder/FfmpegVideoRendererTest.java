@@ -159,6 +159,39 @@ public class FfmpegVideoRendererTest {
     }
 
     @Test
+    public void yuvOutputReportsFieldOrderForEachFrame() throws Exception {
+        Format format = new Format.Builder()
+                .setSampleMimeType(MimeTypes.VIDEO_MPEG2).setWidth(32).setHeight(32).build();
+        FfmpegVideoDecoder decoder = new FfmpegVideoDecoder(1, 1, 4096, 1, format);
+        decoder.setOutputMode(C.VIDEO_OUTPUT_MODE_YUV);
+        try {
+            VideoDecoderOutputBuffer previous = null;
+            String[] fields = {"top", "bottom", "progressive"};
+            for (String field : fields) {
+                byte[] packet;
+                try (DataInputStream asset = new DataInputStream(InstrumentationRegistry.getInstrumentation()
+                        .getContext().getAssets().open("mpeg2-" + field + ".m2v"))) {
+                    packet = new byte[asset.available()];
+                    asset.readFully(packet);
+                }
+                FfmpegVideoDecoderOutputBuffer output =
+                        (FfmpegVideoDecoderOutputBuffer) decodePacket(decoder, format, 0, packet);
+                try {
+                    if (previous != null) assertSame(previous, output);
+                    assertNotNull(output.yuvPlanes);
+                    assertEquals(!field.equals("progressive"), output.isInterlaced());
+                    assertEquals(field.equals("top"), output.isTopFieldFirst());
+                    previous = output;
+                } finally {
+                    output.release();
+                }
+            }
+        } finally {
+            decoder.release();
+        }
+    }
+
+    @Test
     public void renderFailureReturnsSingleBufferAndCleanupDoesNotFreeFrameAgain() throws Exception {
         FfmpegVideoRenderer renderer = renderer();
         FfmpegVideoDecoder decoder = (FfmpegVideoDecoder) renderer.createDecoder(VP9, null);
@@ -364,6 +397,11 @@ public class FfmpegVideoRendererTest {
             packet = new byte[size];
             asset.readFully(packet);
         }
+        return decodePacket(decoder, format, timeUs, packet);
+    }
+
+    private static VideoDecoderOutputBuffer decodePacket(FfmpegVideoDecoder decoder, Format format,
+                                                        long timeUs, byte[] packet) throws Exception {
         DecoderInputBuffer input = decoder.dequeueInputBuffer();
         assertNotNull(input);
         input.ensureSpaceForWrite(packet.length);
