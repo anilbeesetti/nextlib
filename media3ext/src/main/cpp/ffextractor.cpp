@@ -1,4 +1,5 @@
 #include <jni.h>
+#include <algorithm>
 #include <cerrno>
 #include <cstdint>
 #include <cstdio>
@@ -9,12 +10,31 @@ extern "C" {
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/display.h>
+#include <libavutil/dovi_meta.h>
+#include <libavutil/intreadwrite.h>
+#include <libavutil/mastering_display_metadata.h>
 }
 
 namespace {
 constexpr int kBufferSize = 64 * 1024;
 constexpr int kMaxPacket = 32 * 1024 * 1024;
 constexpr int64_t kTimeUnset = INT64_MIN + 1;
+
+struct TrueHdClock {
+    int64_t anchorUs = AV_NOPTS_VALUE;
+    int64_t accessUnits = 0;
+
+    int64_t timestamp(int64_t pts, AVRational timeBase, int sampleRate) {
+        if (pts != AV_NOPTS_VALUE) {
+            anchorUs = av_rescale_q(pts, timeBase, AV_TIME_BASE_Q);
+            accessUnits = 0;
+        }
+        if (anchorUs == AV_NOPTS_VALUE || sampleRate <= 0) return anchorUs;
+        // Each TrueHD access unit has 40 samples at the base rate, scaled along with the sample rate.
+        int baseRate = sampleRate % 44100 == 0 ? 44100 : 48000;
+        return av_sat_add64(anchorUs, av_rescale_q(accessUnits++, {40, baseRate}, AV_TIME_BASE_Q));
+    }
+};
 
 struct Demuxer {
     JNIEnv *env;
@@ -24,6 +44,7 @@ struct Demuxer {
     AVIOContext *io = nullptr;
     AVPacket *packet = nullptr;
     std::vector<bool> supported;
+    std::vector<TrueHdClock> trueHdClocks;
     int64_t startUs = 0;
     ~Demuxer() {
         av_packet_free(&packet);
@@ -113,6 +134,52 @@ const char *mime(AVCodecID id) {
         default: return nullptr;
     }
 }
+
+const AVPacketSideData *sideData(const AVCodecParameters *params, AVPacketSideDataType type) {
+    return av_packet_side_data_get(params->coded_side_data, params->nb_coded_side_data, type);
+}
+
+bool hasHdr10DolbyVisionBaseLayer(const AVCodecParameters *params, const AVPacketSideData *side) {
+    if (!side || side->size < sizeof(AVDOVIDecoderConfigurationRecord) ||
+        params->codec_id != AV_CODEC_ID_HEVC || params->color_primaries != AVCOL_PRI_BT2020 ||
+        params->color_range != AVCOL_RANGE_MPEG || params->color_trc != AVCOL_TRC_SMPTE2084) {
+        return false;
+    }
+    const auto *config = reinterpret_cast<const AVDOVIDecoderConfigurationRecord *>(side->data);
+    return config->dv_profile == 7 && config->bl_present_flag && config->dv_bl_signal_compatibility_id == 6;
+}
+
+jbyteArray hdrStaticInfo(JNIEnv *env, const AVCodecParameters *params) {
+    const auto *side = sideData(params, AV_PKT_DATA_MASTERING_DISPLAY_METADATA);
+    if (!side || side->size < sizeof(AVMasteringDisplayMetadata)) return nullptr;
+    const auto *mastering = reinterpret_cast<const AVMasteringDisplayMetadata *>(side->data);
+    if (!mastering->has_primaries || !mastering->has_luminance) return nullptr;
+
+    // Android uses the little-endian 25-byte HDR static metadata type 1 descriptor.
+    uint8_t bytes[25] = {};
+    auto write = [&bytes](int field, AVRational value, int scale) {
+        if (value.num < 0 || value.den <= 0) return;
+        const auto scaled = std::min<int64_t>(av_rescale(value.num, scale, value.den), UINT16_MAX);
+        AV_WL16(bytes + 1 + field * 2, scaled);
+    };
+    for (int i = 0; i < 3; i++) {
+        write(i * 2, mastering->display_primaries[i][0], 50000);
+        write(i * 2 + 1, mastering->display_primaries[i][1], 50000);
+    }
+    write(6, mastering->white_point[0], 50000);
+    write(7, mastering->white_point[1], 50000);
+    write(8, mastering->max_luminance, 1);
+    write(9, mastering->min_luminance, 10000);
+    side = sideData(params, AV_PKT_DATA_CONTENT_LIGHT_LEVEL);
+    if (side && side->size >= sizeof(AVContentLightMetadata)) {
+        const auto *light = reinterpret_cast<const AVContentLightMetadata *>(side->data);
+        AV_WL16(bytes + 21, std::min<unsigned>(light->MaxCLL, UINT16_MAX));
+        AV_WL16(bytes + 23, std::min<unsigned>(light->MaxFALL, UINT16_MAX));
+    }
+    jbyteArray data = env->NewByteArray(sizeof(bytes));
+    if (data) env->SetByteArrayRegion(data, 0, sizeof(bytes), reinterpret_cast<const jbyte *>(bytes));
+    return data;
+}
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -126,7 +193,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegProgressiveMediaEx
     d->seekInput = env->GetMethodID(cls, "seekInput", "(J)J");
     d->sample = env->GetMethodID(cls, "onSample", "(IJJI[B)V");
     jmethodID track = env->GetMethodID(cls, "onTrack", "(ILjava/lang/String;IIIIII[BLjava/lang/String;)V");
-    jmethodID videoFormat = env->GetMethodID(cls, "onVideoFormat", "(IIFIII)V");
+    jmethodID videoFormat = env->GetMethodID(cls, "onVideoFormat", "(IIFIII[B)V");
     jmethodID ended = env->GetMethodID(cls, "onTracksEnded", "(JZ)V");
     env->DeleteLocalRef(cls);
     if (env->ExceptionCheck()) { delete d; return 0; }
@@ -170,12 +237,15 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegProgressiveMediaEx
         fontBytes += p->extradata_size;
     }
     d->supported.resize(d->format->nb_streams, false);
+    d->trueHdClocks.resize(d->format->nb_streams);
     for (unsigned i = 0; i < d->format->nb_streams && !env->ExceptionCheck(); i++) {
         AVStream *stream = d->format->streams[i];
         AVCodecParameters *p = stream->codecpar;
         if (stream->disposition & AV_DISPOSITION_ATTACHED_PIC) continue;
-        if (p->color_trc == AVCOL_TRC_SMPTE2084 || p->color_trc == AVCOL_TRC_ARIB_STD_B67 ||
-            av_packet_side_data_get(p->coded_side_data, p->nb_coded_side_data, AV_PKT_DATA_MASTERING_DISPLAY_METADATA)) {
+        const auto *dolbyVision = sideData(p, AV_PKT_DATA_DOVI_CONF);
+        const bool hdr10BaseLayer = hasHdr10DolbyVisionBaseLayer(p, dolbyVision);
+        if (!hdr10BaseLayer && (dolbyVision || p->color_trc == AVCOL_TRC_SMPTE2084 ||
+            p->color_trc == AVCOL_TRC_ARIB_STD_B67 || sideData(p, AV_PKT_DATA_MASTERING_DISPLAY_METADATA))) {
             fail(env, "HDR metadata is not supported by FFmpeg extraction; use HW"); break;
         }
         const char *type = mime(p->codec_id);
@@ -222,8 +292,12 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegProgressiveMediaEx
             int rotation = std::isfinite(degrees) ? (static_cast<int>(std::round(degrees)) % 360 + 360) % 360 : 0;
             float ratio = p->sample_aspect_ratio.num > 0 && p->sample_aspect_ratio.den > 0
                 ? static_cast<float>(av_q2d(p->sample_aspect_ratio)) : 0;
-            env->CallVoidMethod(owner, videoFormat, static_cast<jint>(i), rotation, ratio,
-                               p->color_primaries, p->color_range, p->color_trc);
+            jbyteArray hdr = hdr10BaseLayer ? hdrStaticInfo(env, p) : nullptr;
+            if (!env->ExceptionCheck()) {
+                env->CallVoidMethod(owner, videoFormat, static_cast<jint>(i), rotation, ratio,
+                                   p->color_primaries, p->color_range, p->color_trc, hdr);
+            }
+            if (hdr) env->DeleteLocalRef(hdr);
         }
         env->DeleteLocalRef(jmime);
         env->DeleteLocalRef(extra);
@@ -258,13 +332,18 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegProgressiveMediaEx
         fail(env, "Encrypted samples are not supported by FFmpeg extraction"); return false;
     }
     int64_t pts = p->pts == AV_NOPTS_VALUE ? p->dts : p->pts;
-    if (pts == AV_NOPTS_VALUE) return true;
-    int64_t timeUs = av_rescale_q(pts, d->format->streams[p->stream_index]->time_base, AV_TIME_BASE_Q) - d->startUs;
+    AVStream *stream = d->format->streams[p->stream_index];
+    int64_t timeUs = pts == AV_NOPTS_VALUE ? AV_NOPTS_VALUE : av_rescale_q(pts, stream->time_base, AV_TIME_BASE_Q);
+    if (stream->codecpar->codec_id == AV_CODEC_ID_TRUEHD) {
+        // Matroska lacing may timestamp only the first access unit in a block.
+        timeUs = d->trueHdClocks[p->stream_index].timestamp(pts, stream->time_base, stream->codecpar->sample_rate);
+    }
+    if (timeUs == AV_NOPTS_VALUE) return true;
     jbyteArray bytes = env->NewByteArray(p->size);
     if (!bytes) return false;
     env->SetByteArrayRegion(bytes, 0, p->size, reinterpret_cast<jbyte *>(p->data));
-    int64_t durationUs = av_rescale_q(p->duration, d->format->streams[p->stream_index]->time_base, AV_TIME_BASE_Q);
-    env->CallVoidMethod(d->owner, d->sample, p->stream_index, static_cast<jlong>(timeUs), static_cast<jlong>(durationUs),
+    int64_t durationUs = av_rescale_q(p->duration, stream->time_base, AV_TIME_BASE_Q);
+    env->CallVoidMethod(d->owner, d->sample, p->stream_index, static_cast<jlong>(av_sat_sub64(timeUs, d->startUs)), static_cast<jlong>(durationUs),
                        (p->flags & AV_PKT_FLAG_KEY) ? 1 : 0, bytes);
     env->DeleteLocalRef(bytes);
     return !env->ExceptionCheck();
@@ -287,6 +366,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegProgressiveMediaEx
                                     d->format->streams[streamIndex]->time_base);
     int result = av_seek_frame(d->format, streamIndex, timestamp, AVSEEK_FLAG_BACKWARD);
     if (result < 0) fail(env, "Cannot seek FFmpeg container", result);
+    else std::fill(d->trueHdClocks.begin(), d->trueHdClocks.end(), TrueHdClock{});
 }
 
 extern "C" JNIEXPORT void JNICALL

@@ -31,3 +31,16 @@ done
 
 These exercise delayed output, timestamps, EOS, seeking and native frame ownership
 in `FfmpegAv1DecoderTest`. No third-party media is included.
+
+`dolby-vision-profile7.mkv` uses one second of FFmpeg `testsrc2` at 96×64 and 10 fps,
+encoded with libx265 Main 10, limited-range BT.2020 non-constant luminance, and PQ.
+The Matroska track carries synthetic Dolby Vision configuration version 1.0,
+profile 7, level 6, and compatibility ID 6. It contains only the generated HEVC
+base-layer pixels. The muxer was given mastering primaries R(35400,14600),
+G(8500,39850), B(6550,2300), white(15635,16450) in units of 1/50000, mastering
+luminance 0.005–1000 cd/m², MaxCLL 1000 and MaxFALL 400.
+
+`truehd-laced.mka` contains 300 ms of a generated 440 Hz sine wave encoded as
+48 kHz TrueHD. It was muxed into three Matroska SimpleBlocks with Xiph lacing
+of 120 access units each, anchored at 0, 100, and 200 ms. There are no per-frame
+timestamps within each lace.

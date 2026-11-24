@@ -5,22 +5,33 @@ import static org.junit.Assert.*;
 import android.graphics.PixelFormat;
 import android.media.Image;
 import android.media.ImageReader;
+import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.view.Surface;
 import androidx.media3.common.C;
+import androidx.media3.common.ColorInfo;
 import androidx.media3.common.DrmInitData;
 import androidx.media3.common.Format;
+import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.decoder.DecoderInputBuffer;
 import androidx.media3.decoder.VideoDecoderOutputBuffer;
 import androidx.media3.exoplayer.DecoderReuseEvaluation;
+import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.RendererCapabilities;
 import androidx.media3.exoplayer.video.DecoderVideoRenderer;
 import androidx.test.platform.app.InstrumentationRegistry;
+import com.google.common.io.ByteStreams;
 import java.io.DataInputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.lang.reflect.Method;
 import java.nio.ByteBuffer;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
 
@@ -53,6 +64,66 @@ public class FfmpegVideoRendererTest {
                 new DrmInitData.SchemeData(C.WIDEVINE_UUID, "video/mp4", new byte[] {1}))).build();
         assertEquals(C.CRYPTO_TYPE_UNSUPPORTED, drm.cryptoType);
         assertSupport(renderer, drm, C.FORMAT_UNSUPPORTED_DRM);
+    }
+
+    @Test
+    public void onlyHdr10CompatibleDolbyVisionProfile7UsesHevc() {
+        ColorInfo hdr10 = new ColorInfo.Builder()
+                .setColorSpace(C.COLOR_SPACE_BT2020)
+                .setColorRange(C.COLOR_RANGE_LIMITED)
+                .setColorTransfer(C.COLOR_TRANSFER_ST2084)
+                .build();
+        Format profile7 = new Format.Builder()
+                .setSampleMimeType(MimeTypes.VIDEO_DOLBY_VISION)
+                .setCodecs("dvhe.07.06")
+                .setColorInfo(hdr10)
+                .build();
+        FfmpegVideoRenderer renderer = renderer();
+        assertSupport(renderer, profile7, C.FORMAT_HANDLED);
+        assertSupport(renderer, profile7.buildUpon().setColorInfo(null).build(),
+                C.FORMAT_UNSUPPORTED_SUBTYPE);
+        assertSupport(renderer, profile7.buildUpon().setColorInfo(
+                hdr10.buildUpon().setColorRange(C.COLOR_RANGE_FULL).build()).build(),
+                C.FORMAT_UNSUPPORTED_SUBTYPE);
+        assertSupport(renderer, profile7.buildUpon().setCodecs("dvhe.05.06").build(),
+                C.FORMAT_UNSUPPORTED_SUBTYPE);
+    }
+
+    @Test
+    public void rendersDolbyVisionProfile7FromTheStandardReaderInSoftware() throws Exception {
+        var instrumentation = InstrumentationRegistry.getInstrumentation();
+        var context = instrumentation.getTargetContext();
+        File clip = File.createTempFile("profile7-", ".mkv", context.getCacheDir());
+        ExoPlayer[] player = new ExoPlayer[1];
+        DecoderManager manager = new DecoderManager(DecoderMode.FFMPEG, DecoderMode.AUTO);
+        try (ImageReader images = ImageReader.newInstance(96, 64, PixelFormat.RGBA_8888, 2)) {
+            try (var input = instrumentation.getContext().getAssets().open("dolby-vision-profile7.mkv");
+                 var output = new FileOutputStream(clip)) {
+                ByteStreams.copy(input, output);
+            }
+            CountDownLatch frames = new CountDownLatch(3);
+            images.setOnImageAvailableListener(reader -> {
+                try (Image frame = reader.acquireNextImage()) {
+                    if (frame != null) frames.countDown();
+                }
+            }, new Handler(Looper.getMainLooper()));
+            instrumentation.runOnMainSync(() -> {
+                var factory = new NextRenderersFactory(context).setDecoderManager(manager);
+                player[0] = new ExoPlayer.Builder(context, factory).build();
+                manager.attach(player[0]);
+                player[0].setVideoSurface(images.getSurface());
+                player[0].setMediaItem(MediaItem.fromUri(Uri.fromFile(clip)));
+                player[0].prepare();
+                player[0].play();
+            });
+            assertTrue("Expected three rendered Profile 7 frames", frames.await(10, TimeUnit.SECONDS));
+            assertEquals(DecoderMode.FFMPEG, manager.getActiveVideoMode());
+        } finally {
+            instrumentation.runOnMainSync(() -> {
+                if (player[0] != null) player[0].release();
+            });
+            clip.delete();
+        }
     }
 
     @Test

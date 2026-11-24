@@ -4,9 +4,11 @@ import android.view.Surface;
 
 import androidx.annotation.Nullable;
 import androidx.media3.common.C;
+import androidx.media3.common.ColorInfo;
 import androidx.media3.common.Format;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.util.Assertions;
+import androidx.media3.common.util.CodecSpecificDataUtil;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.common.util.Util;
 import androidx.media3.decoder.DecoderInputBuffer;
@@ -62,18 +64,36 @@ final class FfmpegVideoDecoder extends
         if (!FfmpegLibrary.isAvailable()) {
             throw new FfmpegDecoderException("Failed to load decoder native library.");
         }
-        assert format.sampleMimeType != null;
         this.format = format;
-        codecName = Assertions.checkNotNull(FfmpegLibrary.getCodecName(format.sampleMimeType));
-        extraData = getExtraData(format.sampleMimeType, format.initializationData);
+        String mimeType = Assertions.checkNotNull(getDecoderMimeType(format));
+        codecName = Assertions.checkNotNull(FfmpegLibrary.getCodecName(mimeType));
+        extraData = getExtraData(mimeType, format.initializationData);
         // Format uses clockwise degrees. Ignore unsupported non-right-angle rotations.
         int rotation = format.rotationDegrees % 360;
         rotationDegrees = rotation % 90 == 0 ? (rotation + 360) % 360 : 0;
-        nativeContext = ffmpegInitialize(codecName, extraData, threads);
+        nativeContext = ffmpegInitialize(codecName, extraData, threads, hasHdr10ColorInfo(format.colorInfo));
         if (nativeContext == 0) {
             throw new FfmpegDecoderException("Failed to initialize decoder.");
         }
         setInitialInputBufferSize(initialInputBufferSize);
+    }
+
+    @Nullable
+    static String getDecoderMimeType(Format format) {
+        if (MimeTypes.VIDEO_DOLBY_VISION.equals(format.sampleMimeType)
+                && hasHdr10ColorInfo(format.colorInfo)) {
+            var profile = CodecSpecificDataUtil.getCodecProfileAndLevel(format);
+            if (profile != null && profile.first == android.media.MediaCodecInfo.CodecProfileLevel.DolbyVisionProfileDvheDtb) {
+                return MimeTypes.VIDEO_H265;
+            }
+        }
+        return format.sampleMimeType;
+    }
+
+    private static boolean hasHdr10ColorInfo(@Nullable ColorInfo colorInfo) {
+        return colorInfo != null && colorInfo.colorSpace == C.COLOR_SPACE_BT2020
+                && colorInfo.colorTransfer == C.COLOR_TRANSFER_ST2084
+                && colorInfo.colorRange == C.COLOR_RANGE_LIMITED;
     }
 
     /**
@@ -231,7 +251,8 @@ final class FfmpegVideoDecoder extends
         }
     }
 
-    private native long ffmpegInitialize(String codecName, @Nullable byte[] extraData, int threads);
+    private native long ffmpegInitialize(
+            String codecName, @Nullable byte[] extraData, int threads, boolean hdr10);
 
     private native long ffmpegReset(long context);
 

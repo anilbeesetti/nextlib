@@ -62,12 +62,12 @@ void LogErrorForTest(const char *function, int error) {
     logError(function, error);
 }
 
-static AVFrame *MakeFrame() {
+static AVFrame *MakeFrame(int width = 128, int height = 64, AVPixelFormat format = AV_PIX_FMT_YUV420P) {
     AVFrame *frame = av_frame_alloc();
     assert(frame);
-    frame->width = 128;
-    frame->height = 64;
-    frame->format = AV_PIX_FMT_YUV420P;
+    frame->width = width;
+    frame->height = height;
+    frame->format = format;
     frame->colorspace = AVCOL_SPC_UNSPECIFIED;
     frame->color_range = AVCOL_RANGE_MPEG;
     assert(av_frame_get_buffer(frame, 32) == 0);
@@ -116,6 +116,48 @@ static void CheckColorsAndRange() {
     av_frame_free(&source);
     av_frame_free(&dest);
     puts("PASS: unknown/BT.709/BT.601 matrices and full/limited range cache transitions");
+}
+
+static void CheckHdrToneMapping() {
+    AVFrame *source = MakeFrame();
+    source->colorspace = AVCOL_SPC_BT2020_NCL;
+    source->color_primaries = AVCOL_PRI_BT2020;
+    source->color_trc = AVCOL_TRC_SMPTE2084;
+    ScaleContext scale;
+    uint8_t rgba[128 * 64 * 4];
+    uint8_t *planes[] = {rgba, nullptr, nullptr, nullptr};
+    const int strides[] = {128 * 4, 0, 0, 0};
+    int previous = -1;
+    for (int luma : {16, 127, 235}) {
+        Fill(source, luma, 128, 128);
+        assert(scale.Convert(source, AV_PIX_FMT_RGBA, planes, strides, 0));
+        assert(rgba[0] > previous);
+        if (luma == 127) assert(rgba[0] > 150);
+        assert(abs(rgba[0] - rgba[1]) <= 2 && abs(rgba[0] - rgba[2]) <= 2);
+        previous = rgba[0];
+    }
+    av_frame_free(&source);
+    puts("PASS: PQ HDR maps to brighter SDR midtones with neutral grays");
+
+    source = MakeFrame(1920, 1080, AV_PIX_FMT_YUV420P10LE);
+    source->colorspace = AVCOL_SPC_BT2020_NCL;
+    source->color_primaries = AVCOL_PRI_BT2020;
+    source->color_trc = AVCOL_TRC_SMPTE2084;
+    for (int plane = 0; plane < 3; plane++) {
+        std::fill_n(reinterpret_cast<uint16_t *>(source->data[plane]),
+                    source->linesize[plane] / 2 * (plane == 0 ? 1080 : 540), 512);
+    }
+    AVFrame reduced{};
+    assert(scale.PrepareSurfaceFrame(source, reduced));
+    assert(reduced.width == 1280 && reduced.height == 720);
+    assert(reduced.color_trc == source->color_trc);
+    assert(reinterpret_cast<const uint16_t *>(reduced.data[0])[0] == 512);
+    uint8_t *reused = reduced.data[0];
+    assert(scale.PrepareSurfaceFrame(source, reduced) && reduced.data[0] == reused);
+    source->color_trc = AVCOL_TRC_BT709;
+    assert(!scale.PrepareSurfaceFrame(source, reduced));
+    av_frame_free(&source);
+    puts("PASS: larger PQ Surface frames are resized before tone mapping, SDR remains unchanged");
 }
 
 // Odd dimensions, padded/negative source strides and both conversion formats.
@@ -363,6 +405,7 @@ int main() {
     puts("PASS: alt-ref hidden frames exercise send-EAGAIN followed by receive-EAGAIN");
     CheckVpDecoders();
     CheckColorsAndRange();
+    CheckHdrToneMapping();
     CheckInvalidWindowBuffers();
     CheckRotatedConversion();
 }

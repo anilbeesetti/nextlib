@@ -145,13 +145,14 @@ internal class FfmpegProgressiveMediaExtractor(private val source: ReopeningData
         tracks[index] = output.track(index, type).also { it.format(built) }
     }
 
-    private fun onVideoFormat(index: Int, rotation: Int, ratio: Float, primaries: Int, range: Int, transfer: Int) {
+    private fun onVideoFormat(index: Int, rotation: Int, ratio: Float, primaries: Int, range: Int, transfer: Int, hdrStaticInfo: ByteArray?) {
         val format = checkNotNull(formats[index]).buildUpon().setRotationDegrees(rotation)
         if (ratio > 0) format.setPixelWidthHeightRatio(ratio)
         format.setColorInfo(ColorInfo.Builder()
             .setColorSpace(ColorInfo.isoColorPrimariesToColorSpace(primaries))
             .setColorRange(when (range) { 1 -> C.COLOR_RANGE_LIMITED; 2 -> C.COLOR_RANGE_FULL; else -> Format.NO_VALUE })
-            .setColorTransfer(ColorInfo.isoTransferCharacteristicsToColorTransfer(transfer)).build())
+            .setColorTransfer(ColorInfo.isoTransferCharacteristicsToColorTransfer(transfer))
+            .setHdrStaticInfo(hdrStaticInfo).build())
         tracks[index]?.format(format.build().also { formats[index] = it })
     }
 
