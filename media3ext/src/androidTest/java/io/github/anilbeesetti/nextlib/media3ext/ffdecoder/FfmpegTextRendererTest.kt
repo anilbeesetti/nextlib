@@ -104,14 +104,54 @@ class FfmpegTextRendererTest {
     @Test fun matroskaExtractsFontsWithoutAddingThemToSessionBundles() {
         val args = InstrumentationRegistry.getArguments()
         val uri = android.net.Uri.parse(args.getString("fontSample") ?: "asset:///subtitles/font.ass.mkv")
+        val fonts = extractFontsFromFirstSubtitleSample(uri)
+        assertEquals(args.getString("fontCount")?.toInt() ?: 1, fonts.size)
+        args.getString("fontHashes")?.let { hashes ->
+            val actual = fonts.map { bytes ->
+                java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+            }.toSet()
+            assertEquals(hashes.split(',').toSet(), actual)
+        }
+    }
+
+    @Test fun indexedTrailingFontIsAvailableForFirstSubtitleSample() {
+        // This MKV puts the synthetic shapes.ttf attachment after its cluster and cues.
+        val uri = android.net.Uri.parse("asset:///subtitles/font-tail.ass.mkv")
+        for (restartOnFirstSeek in listOf(false, true)) {
+            val fonts = extractFontsFromFirstSubtitleSample(uri, restartOnFirstSeek)
+            assertEquals("Font must be attached before the first ASS sample", 1, fonts.size)
+            assertArrayEquals(asset("shapes.ttf"), fonts.single())
+        }
+    }
+
+    @Test fun truncatedIndexedFontStillAllowsSubtitleSamples() {
+        val bytes = asset("font-tail.ass.mkv")
+        val file = java.io.File.createTempFile("truncated-matroska-font", ".mkv", context.cacheDir)
+        try {
+            file.writeBytes(bytes.copyOf(bytes.size - 1))
+            assertTrue(extractFontsFromFirstSubtitleSample(android.net.Uri.fromFile(file)).isEmpty())
+        } finally {
+            file.delete()
+        }
+    }
+
+    private fun extractFontsFromFirstSubtitleSample(uri: android.net.Uri, restartOnFirstSeek: Boolean = false): List<ByteArray> {
         val dataSource = androidx.media3.datasource.DefaultDataSource.Factory(instrumentation.context).createDataSource()
         val extractor = FfmpegSubtitleExtractorsFactory().experimentalSetTextTrackTranscodingEnabled(false).createExtractors().first {
             it.underlyingImplementation is androidx.media3.extractor.mkv.MatroskaExtractor
         }
-        val formats = mutableListOf<Format>()
+        var firstSubtitleFormat: Format? = null
         extractor.init(object : androidx.media3.extractor.ExtractorOutput {
             override fun track(id: Int, type: Int) = object : androidx.media3.extractor.ForwardingTrackOutput(androidx.media3.extractor.DiscardingTrackOutput()) {
-                override fun format(format: Format) { if (format.sampleMimeType == MimeTypes.TEXT_SSA) formats += format }
+                private var subtitleFormat: Format? = null
+
+                override fun format(format: Format) {
+                    subtitleFormat = format.takeIf { it.sampleMimeType == MimeTypes.TEXT_SSA }
+                }
+
+                override fun sampleMetadata(timeUs: Long, flags: Int, size: Int, offset: Int, cryptoData: androidx.media3.extractor.TrackOutput.CryptoData?) {
+                    if (firstSubtitleFormat == null) firstSubtitleFormat = subtitleFormat
+                }
             }
             override fun endTracks() = Unit
             override fun seekMap(seekMap: androidx.media3.extractor.SeekMap) = Unit
@@ -123,26 +163,28 @@ class FfmpegTextRendererTest {
                 return androidx.media3.extractor.DefaultExtractorInput(dataSource, position, if (length < 0) length else position + length)
             }
             var input = open(0)
+            var restart = restartOnFirstSeek
             val seek = androidx.media3.extractor.PositionHolder()
             var result = androidx.media3.extractor.Extractor.RESULT_CONTINUE
-            while (result != androidx.media3.extractor.Extractor.RESULT_END_OF_INPUT && formats.none { it.metadata != null }) {
+            while (result != androidx.media3.extractor.Extractor.RESULT_END_OF_INPUT && firstSubtitleFormat == null) {
                 result = extractor.read(input, seek)
-                if (result == androidx.media3.extractor.Extractor.RESULT_SEEK) input = open(seek.position)
+                if (result == androidx.media3.extractor.Extractor.RESULT_SEEK) {
+                    if (restart) {
+                        restart = false
+                        extractor.seek(0, 0)
+                        input = open(0)
+                    } else {
+                        input = open(seek.position)
+                    }
+                }
             }
-            val format = formats.last { it.metadata != null }
-            val metadata = checkNotNull(format.metadata)
-            val fonts = (0 until metadata.length()).mapNotNull {
-                (metadata[it] as? androidx.media3.extractor.metadata.id3.BinaryFrame)?.takeIf { it.id == MATROSKA_FONT_ID }?.data
-            }
-            assertEquals(args.getString("fontCount")?.toInt() ?: 1, fonts.size)
-            args.getString("fontHashes")?.let { hashes ->
-                val actual = fonts.map { bytes ->
-                    java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-                }.toSet()
-                assertEquals(hashes.split(',').toSet(), actual)
-            }
+            val format = checkNotNull(firstSubtitleFormat) { "No ASS subtitle sample found" }
             assertEquals(2, format.initializationData.size)
             assertNull("Fonts must not enter MediaSession track bundles", Format.fromBundle(format.toBundle()).metadata)
+            val metadata = format.metadata ?: return emptyList()
+            return (0 until metadata.length()).mapNotNull {
+                (metadata[it] as? androidx.media3.extractor.metadata.id3.BinaryFrame)?.takeIf { it.id == MATROSKA_FONT_ID }?.data
+            }
         } finally {
             dataSource.close()
             extractor.release()

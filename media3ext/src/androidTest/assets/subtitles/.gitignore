@@ -1,5 +1,6 @@
 *.mp4
 *.mkv
+!font-tail.ass.mkv
 *.webm
 *.ts
 *.sup
