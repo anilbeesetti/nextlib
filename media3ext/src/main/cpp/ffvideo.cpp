@@ -90,16 +90,58 @@ static int GetOutputColorspace(AVColorSpace colorspace) {
 struct ScaleContext {
     ~ScaleContext() {
         sws_freeContext(context);
+        sws_freeContext(hdr_context);
+        sws_freeContext(hdr_prescale);
+        av_frame_free(&hdr_reduced);
         av_frame_free(&converted);
+    }
+
+    bool PrepareSurfaceFrame(const AVFrame *frame, AVFrame &reduced) {
+        // shortcut: cap PQ Surface output at 1280 pixels on its long edge until GPU tone mapping is available.
+        constexpr int maxHdrEdge = 1280;
+        const int edge = std::max(frame->width, frame->height);
+        if (frame->color_trc != AVCOL_TRC_SMPTE2084 || edge <= maxHdrEdge) return false;
+
+        const int width = std::max(1, static_cast<int>(av_rescale(frame->width, maxHdrEdge, edge)));
+        const int height = std::max(1, static_cast<int>(av_rescale(frame->height, maxHdrEdge, edge)));
+        const auto format = static_cast<AVPixelFormat>(frame->format);
+        if (hdr_reduced && (hdr_reduced->width != width || hdr_reduced->height != height ||
+                            hdr_reduced->format != format)) {
+            av_frame_free(&hdr_reduced);
+        }
+        if (!hdr_reduced) {
+            hdr_reduced = av_frame_alloc();
+            if (!hdr_reduced) return false;
+            hdr_reduced->width = width;
+            hdr_reduced->height = height;
+            hdr_reduced->format = format;
+            if (av_frame_get_buffer(hdr_reduced, 32) < 0) {
+                av_frame_free(&hdr_reduced);
+                return false;
+            }
+        }
+        hdr_prescale = sws_getCachedContext(hdr_prescale, frame->width, frame->height, format,
+                                           width, height, format, SWS_FAST_BILINEAR, nullptr, nullptr, nullptr);
+        if (!hdr_prescale || sws_scale(hdr_prescale, frame->data, frame->linesize, 0,
+                                       frame->height, hdr_reduced->data, hdr_reduced->linesize) != height) {
+            return false;
+        }
+        // Borrow the scaled planes and original HDR metadata for this render call.
+        reduced = *hdr_reduced;
+        reduced.color_primaries = frame->color_primaries;
+        reduced.colorspace = frame->colorspace;
+        reduced.color_range = frame->color_range;
+        reduced.color_trc = frame->color_trc;
+        reduced.chroma_location = frame->chroma_location;
+        reduced.side_data = frame->side_data;
+        reduced.nb_side_data = frame->nb_side_data;
+        return true;
     }
 
     bool Convert(const AVFrame *frame, AVPixelFormat format, uint8_t *dest[],
                  const int strides[], int rotation) {
-        SwsContext *scale = Get(frame, format);
-        if (!scale) return false;
         if (!rotation) {
-            return sws_scale(scale, frame->data, frame->linesize, 0, frame->height,
-                             dest, strides) == frame->height;
+            return Scale(frame, format, dest, strides);
         }
 
         // Rotate after color/range conversion. The public window transform requires
@@ -119,8 +161,7 @@ struct ScaleContext {
                 return false;
             }
         }
-        if (sws_scale(scale, frame->data, frame->linesize, 0, frame->height,
-                      converted->data, converted->linesize) != frame->height) return false;
+        if (!Scale(frame, format, converted->data, converted->linesize)) return false;
 
         const int pixelSize = format == AV_PIX_FMT_RGBA ? 4 : 1;
         for (int plane = 0; plane < (pixelSize == 4 ? 1 : 3); plane++) {
@@ -139,6 +180,32 @@ struct ScaleContext {
             }
         }
         return true;
+    }
+
+    bool Scale(const AVFrame *frame, AVPixelFormat format, uint8_t *dest[], const int strides[]) {
+        if (frame->color_trc == AVCOL_TRC_SMPTE2084) {
+            if (!hdr_context) {
+                hdr_context = sws_alloc_context();
+                if (!hdr_context) return false;
+                hdr_context->threads = 4;
+            }
+            AVFrame output{};
+            output.width = frame->width;
+            output.height = frame->height;
+            output.format = format;
+            output.color_primaries = AVCOL_PRI_BT709;
+            output.colorspace = format == AV_PIX_FMT_RGBA ? AVCOL_SPC_RGB : AVCOL_SPC_BT709;
+            output.color_range = format == AV_PIX_FMT_RGBA ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+            output.color_trc = format == AV_PIX_FMT_RGBA ? AVCOL_TRC_IEC61966_2_1 : AVCOL_TRC_BT709;
+            std::copy_n(dest, 4, output.data);
+            std::copy_n(strides, 4, output.linesize);
+            const int result = sws_scale_frame(hdr_context, &output, frame);
+            if (result < 0) logError("sws_scale_frame", result);
+            return result >= 0;
+        }
+        SwsContext *scale = Get(frame, format);
+        return scale && sws_scale(scale, frame->data, frame->linesize, 0, frame->height,
+                                  dest, strides) == frame->height;
     }
 
     SwsContext *Get(const AVFrame *frame, AVPixelFormat output_format) {
@@ -174,6 +241,9 @@ struct ScaleContext {
     }
 
     SwsContext *context{};
+    SwsContext *hdr_context{};
+    SwsContext *hdr_prescale{};
+    AVFrame *hdr_reduced{};
     AVFrame *converted{};
     std::array<int, 6> cached_configuration{};
 };
@@ -188,6 +258,7 @@ static int DiscardLockedBuffer(ANativeWindow *window) {
 }
 
 struct JniContext {
+    bool hdr10{};
     ~JniContext() {
         ClearPendingFrames();
         releaseContext(codecContext);
@@ -341,14 +412,17 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                  jobject thiz,
                                                                                  jstring codec_name,
                                                                                  jbyteArray extra_data,
-                                                                                 jint threads) {
+                                                                                 jint threads,
+                                                                                 jboolean hdr10) {
     AVCodec *codec = getCodecByName(env, codec_name);
     if (!codec) {
         LOGE("Codec not found.");
         return 0L;
     }
 
-    return (jlong) createVideoContext(env, codec, extra_data, threads);
+    auto *context = createVideoContext(env, codec, extra_data, threads);
+    if (context) context->hdr10 = hdr10;
+    return reinterpret_cast<jlong>(context);
 }
 
 extern "C"
@@ -397,10 +471,18 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                   jint displayed_height,
                                                                                   jint rotation_degrees) {
     auto *const jniContext = reinterpret_cast<JniContext *>(jContext);
-    auto *frame = reinterpret_cast<AVFrame *>(
+    auto *frame = reinterpret_cast<const AVFrame *>(
             env->GetLongField(output_buffer, jniContext->decoder_private_field));
     if (!frame || !jniContext->MaybeAcquireNativeWindow(env, surface)) {
         return VIDEO_DECODER_ERROR_OTHER;
+    }
+
+    AVFrame reduced{};
+    if (jniContext->renderContext.PrepareSurfaceFrame(frame, reduced)) {
+        frame = &reduced;
+        const bool quarter_turn = rotation_degrees == 90 || rotation_degrees == 270;
+        displayed_width = quarter_turn ? reduced.height : reduced.width;
+        displayed_height = quarter_turn ? reduced.width : reduced.height;
     }
 
     if (jniContext->native_window_width != displayed_width ||
@@ -495,6 +577,13 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         return VIDEO_DECODER_ERROR_OTHER;
     }
 
+    if (jniContext->hdr10) {
+        if (frame->color_primaries == AVCOL_PRI_UNSPECIFIED) frame->color_primaries = AVCOL_PRI_BT2020;
+        if (frame->colorspace == AVCOL_SPC_UNSPECIFIED) frame->colorspace = AVCOL_SPC_BT2020_NCL;
+        if (frame->color_range == AVCOL_RANGE_UNSPECIFIED) frame->color_range = AVCOL_RANGE_MPEG;
+        if (frame->color_trc == AVCOL_TRC_UNSPECIFIED) frame->color_trc = AVCOL_TRC_SMPTE2084;
+    }
+
     env->CallVoidMethod(output_buffer, jniContext->init_method, frame->pts, output_mode, nullptr);
     if (env->ExceptionCheck()) {
         av_frame_free(&frame);
@@ -520,7 +609,8 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
     // Media3's YUV output contract is always planar 8-bit 4:2:0, even for 10-bit/4:4:4 input.
     const int yStride = ALIGN(width, 32);
     const int uvStride = ALIGN((width + 1) / 2, 16);
-    const int colorspace = GetOutputColorspace(frame->colorspace);
+    const int colorspace = GetOutputColorspace(
+            frame->color_trc == AVCOL_TRC_SMPTE2084 ? AVCOL_SPC_BT709 : frame->colorspace);
     const jboolean initialized = env->CallBooleanMethod(output_buffer,
             jniContext->init_for_yuv_frame_method, width, height,
             yStride, uvStride, colorspace);

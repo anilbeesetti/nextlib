@@ -109,7 +109,7 @@ public final class FfmpegVideoRenderer extends DecoderVideoRenderer {
         String mimeType = format.sampleMimeType;
         if (!FfmpegLibrary.isAvailable() || !MimeTypes.isVideo(mimeType)) {
             return C.FORMAT_UNSUPPORTED_TYPE;
-        } else if (!FfmpegLibrary.supportsFormat(mimeType)) {
+        } else if (!FfmpegLibrary.supportsFormat(FfmpegVideoDecoder.getDecoderMimeType(format))) {
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_SUBTYPE);
         } else if (format.cryptoType != C.CRYPTO_TYPE_NONE) {
             return RendererCapabilities.create(C.FORMAT_UNSUPPORTED_DRM);

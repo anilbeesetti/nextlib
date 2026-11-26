@@ -9,8 +9,13 @@ The first target is surveillance recordings with an IMKH prefix and H.264 in MPE
 which Media3's standard extractors reject. Other enabled self-contained containers are
 MP4/MOV, Matroska/WebM, MPEG-TS, AVI, ASF, FLV, Ogg, WAV, MP3, AAC, FLAC, H.264 and HEVC.
 Unsupported audio/video codecs fail explicitly instead of silently dropping tracks.
-DRM, adaptive manifests and HDR belong on the application's standard Media3 path.
-HDR is rejected until its static/dynamic metadata can be preserved and tested.
+DRM and adaptive manifests use the application's standard Media3 path.
+HEVC Dolby Vision Profile 7 with an HDR10-compatible base layer (compatibility ID 6)
+is exposed as HDR10. The system decoder receives the BT.2020/PQ color information and
+available static mastering and content-light metadata. The software decoder tone maps
+the base layer to SDR and limits PQ Surface output to 1280 pixels on the long edge
+to reduce CPU load. Dolby Vision enhancement and dynamic metadata are not applied.
+Other HDR formats use the standard Media3 reader.
 
 ## Loading contract
 
@@ -25,11 +30,14 @@ partial native packet state is not reused by automatic I/O retries. Interrupted 
 preserve their Java exception and cancellation is checked at read/seek boundaries.
 
 Codec initialization and length-prefixed H.264/HEVC packets are normalized for both
-MediaCodec and NextLib's software renderers. SDR color information, rotation, pixel
+MediaCodec and NextLib's software renderers. Color information, rotation, pixel
 aspect ratio, track language and default/forced flags are retained. ASS/font attachments,
 bitmap subtitles, SubRip packets and external subtitle sources reuse the existing text
 renderers. AVIO buffers, packets and native handles are owned by the media period and
 released with its extractor.
+
+TrueHD access units in a Matroska lace use the block timestamp and sample rate to
+recover timing when FFmpeg supplies a timestamp only for the first unit.
 
 ## Verification, 2026-11-16
 
