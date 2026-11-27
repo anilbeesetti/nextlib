@@ -5,6 +5,19 @@ libavformat and feeds compressed samples into Media3. Keep using `NextRenderersF
 and `DecoderManager`; extraction does not select the renderer. `DecoderMode.SYSTEM`
 allows both hardware and software Android MediaCodec implementations.
 
+For Media3 subtitle rendering with the same FFmpeg container extraction, select the
+mode when creating the source:
+
+```kotlin
+FfmpegMediaSourceFactory(dataSources).createMediaSource(
+    item = mediaItem,
+    subtitleRenderingMode = SubtitleRenderingMode.MEDIA3,
+)
+```
+
+This applies to embedded tracks and sidecar files. The one-argument overload uses
+`SubtitleRenderingMode.FFMPEG`.
+
 The first target is surveillance recordings with an IMKH prefix and H.264 in MPEG-PS,
 which Media3's standard extractors reject. Other enabled self-contained containers are
 MP4/MOV, Matroska/WebM, MPEG-TS, AVI, ASF, FLV, Ogg, WAV, MP3, AAC, FLAC, H.264 and HEVC.

@@ -33,9 +33,12 @@ import java.io.InterruptedIOException
 
 @Keep
 @UnstableApi
-internal class FfmpegProgressiveMediaExtractor(private val source: ReopeningDataSource) : ProgressiveMediaExtractor {
+internal class FfmpegProgressiveMediaExtractor(
+    private val source: ReopeningDataSource,
+    private val subtitleRenderingMode: SubtitleRenderingMode,
+) : ProgressiveMediaExtractor {
     private lateinit var reader: DataReader
-    private lateinit var output: ExtractorOutput
+    private lateinit var output: SubtitleTranscodingExtractorOutput
     private val tracks = mutableMapOf<Int, TrackOutput>()
     private val formats = mutableMapOf<Int, Format>()
     private val nalLengths = mutableMapOf<Int, Int>()
@@ -47,11 +50,17 @@ internal class FfmpegProgressiveMediaExtractor(private val source: ReopeningData
 
     override fun init(dataReader: DataReader, uri: Uri, responseHeaders: Map<String, List<String>>, position: Long, length: Long, output: ExtractorOutput) {
         reader = dataReader
-        val parsers = DefaultSubtitleParserFactory()
-        this.output = SubtitleTranscodingExtractorOutput(output, object : SubtitleParser.Factory by parsers {
-            override fun supportsFormat(format: Format): Boolean = !usesNativeSubtitles(format.sampleMimeType) && parsers.supportsFormat(format)
-        })
         if (handle == 0L) {
+            val parsers = DefaultSubtitleParserFactory()
+            val subtitleParsers = if (subtitleRenderingMode == SubtitleRenderingMode.MEDIA3) {
+                parsers
+            } else {
+                object : SubtitleParser.Factory by parsers {
+                    override fun supportsFormat(format: Format): Boolean =
+                        !usesNativeSubtitles(format.sampleMimeType) && parsers.supportsFormat(format)
+                }
+            }
+            this.output = SubtitleTranscodingExtractorOutput(output, subtitleParsers)
             if (!FfmpegLibrary.isAvailable()) throw IOException("FFmpeg extraction library unavailable")
             handle = try { nativeOpen() } catch (e: IOException) {
                 throw ParserException.createForMalformedContainer("FFmpeg could not probe media", e)
@@ -64,7 +73,11 @@ internal class FfmpegProgressiveMediaExtractor(private val source: ReopeningData
         started = true
         // A failed native packet read cannot safely resume partial parser state through Loader retries.
         return try {
-            pendingSeekUs?.let { nativeSeek(handle, it); pendingSeekUs = null }
+            pendingSeekUs?.let {
+                output.resetSubtitleParsers()
+                nativeSeek(handle, it)
+                pendingSeekUs = null
+            }
             if (nativeRead(handle)) Extractor.RESULT_CONTINUE else Extractor.RESULT_END_OF_INPUT
         }
         catch (e: IOException) { throw ParserException.createForMalformedContainer("FFmpeg extraction failed", e) }
@@ -94,6 +107,13 @@ internal class FfmpegProgressiveMediaExtractor(private val source: ReopeningData
     }
 
     private fun onTrack(index: Int, mime: String, width: Int, height: Int, channels: Int, sampleRate: Int, pcmEncoding: Int, selectionFlags: Int, extra: ByteArray, language: String?) {
+        if (subtitleRenderingMode == SubtitleRenderingMode.MEDIA3) {
+            // These parsers require initialization data, which some containers omit.
+            when (mime) {
+                MimeTypes.APPLICATION_VOBSUB -> if (extra.isEmpty()) return
+                MimeTypes.APPLICATION_DVBSUBS -> if (extra.size < 4) return
+            }
+        }
         var initializationData = if (extra.isEmpty()) emptyList() else listOf(extra)
         val format = Format.Builder().setId(index.toString()).setSampleMimeType(mime).setLanguage(language).setSelectionFlags(selectionFlags)
         if (mime == MimeTypes.VIDEO_H264 || mime == MimeTypes.VIDEO_H265) {
@@ -114,7 +134,12 @@ internal class FfmpegProgressiveMediaExtractor(private val source: ReopeningData
             }
         }
         mimes[index] = mime
-        if (mime == MimeTypes.TEXT_SSA) initializationData = listOf(byteArrayOf(), extra)
+        if (mime == MimeTypes.TEXT_SSA) {
+            initializationData = listOf(
+                "Format: Start, End, ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text".toByteArray(),
+                extra,
+            )
+        }
         if (fonts.isNotEmpty()) format.setMetadata(Metadata(*fonts.map { BinaryFrame(MATROSKA_FONT_ID, it) }.toTypedArray()))
         initializationData = when (mime) {
             MimeTypes.AUDIO_OPUS -> {
