@@ -361,7 +361,7 @@ struct JniContext {
 JniContext *createVideoContext(JNIEnv *env,
                                AVCodec *codec,
                                jbyteArray extraData,
-                               jint threads, jint width, jint height) {
+                               jint threads, jint width = 0, jint height = 0) {
     auto jniContext = std::make_unique<JniContext>();
 
     AVCodecContext *codecContext = avcodec_alloc_context3(codec);
