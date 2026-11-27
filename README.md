@@ -197,6 +197,14 @@ initialization fallback. Video and audio are selected independently. See
 [`media3ext/DECODER_SWITCHING.md`](media3ext/DECODER_SWITCHING.md) for mode behavior, lifecycle, and
 application-owned error handling.
 
+## Interlaced video
+
+With the FFmpeg video renderer and a Media3 `VideoDecoderOutputBufferRenderer` as the video
+output, cast the received YUV buffer to `FfmpegVideoDecoderOutputBuffer` to read
+`isInterlaced()` and `isTopFieldFirst()` before releasing the buffer. Field order
+applies to interlaced frames in their original orientation, before any rotation
+applied to the YUV planes.
+
 ## Building from source
 
 Use macOS or Linux (WSL on Windows), JDK 17+, `make`, `curl`, `tar`, and

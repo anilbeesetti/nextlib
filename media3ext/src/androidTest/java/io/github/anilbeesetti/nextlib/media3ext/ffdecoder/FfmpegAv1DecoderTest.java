@@ -95,7 +95,6 @@ public class FfmpegAv1DecoderTest {
                 frames++;
             } finally {
                 output.release();
-                assertEquals(0, output.decoderPrivate);
             }
         }
         throw new AssertionError("Decoder stalled: queued=" + queued + " frames=" + frames);

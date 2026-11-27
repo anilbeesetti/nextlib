@@ -394,12 +394,14 @@ JniContext *createVideoContext(JNIEnv *env,
     }
 
     // Populate JNI References.
-    jclass outputBufferClass = env->FindClass("androidx/media3/decoder/VideoDecoderOutputBuffer");
+    jclass outputBufferClass = env->FindClass(
+            "io/github/anilbeesetti/nextlib/media3ext/ffdecoder/FfmpegVideoDecoderOutputBuffer");
+    if (!outputBufferClass) return nullptr;
     jniContext->data_field = env->GetFieldID(outputBufferClass, "data", "Ljava/nio/ByteBuffer;");
     jniContext->decoder_private_field = env->GetFieldID(outputBufferClass, "decoderPrivate", "J");
     jniContext->init_for_private_frame_method = env->GetMethodID(outputBufferClass, "initForPrivateFrame", "(II)V");
     jniContext->init_for_yuv_frame_method = env->GetMethodID(outputBufferClass, "initForYuvFrame", "(IIIII)Z");
-    jniContext->init_method = env->GetMethodID(outputBufferClass, "init", "(JILjava/nio/ByteBuffer;)V");
+    jniContext->init_method = env->GetMethodID(outputBufferClass, "initFromFfmpeg", "(JIZZ)V");
 
     if (env->ExceptionCheck()) return nullptr;
     return jniContext.release();
@@ -584,7 +586,9 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         if (frame->color_trc == AVCOL_TRC_UNSPECIFIED) frame->color_trc = AVCOL_TRC_SMPTE2084;
     }
 
-    env->CallVoidMethod(output_buffer, jniContext->init_method, frame->pts, output_mode, nullptr);
+    env->CallVoidMethod(output_buffer, jniContext->init_method, frame->pts, output_mode,
+                        (frame->flags & AV_FRAME_FLAG_INTERLACED) != 0,
+                        (frame->flags & AV_FRAME_FLAG_TOP_FIELD_FIRST) != 0);
     if (env->ExceptionCheck()) {
         av_frame_free(&frame);
         return VIDEO_DECODER_ERROR_OTHER;

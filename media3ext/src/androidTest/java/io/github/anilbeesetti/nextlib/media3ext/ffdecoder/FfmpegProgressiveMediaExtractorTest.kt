@@ -73,7 +73,7 @@ class FfmpegProgressiveMediaExtractorTest {
         val assets = InstrumentationRegistry.getInstrumentation().context.assets
         val bytes = assets.open(name).use { it.readBytes() }
         val source = ReopeningDataSource(ByteArrayDataSource(bytes))
-        val extractor = FfmpegProgressiveMediaExtractor(source)
+        val extractor = FfmpegProgressiveMediaExtractor(source, SubtitleRenderingMode.FFMPEG)
         val uri = Uri.parse("memory:///$name")
         val output = object : ExtractorOutput {
             override fun track(id: Int, type: Int): TrackOutput {

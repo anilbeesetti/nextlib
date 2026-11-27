@@ -44,3 +44,16 @@ luminance 0.005–1000 cd/m², MaxCLL 1000 and MaxFALL 400.
 48 kHz TrueHD. It was muxed into three Matroska SimpleBlocks with Xiph lacing
 of 120 access units each, anchored at 0, 100, and 200 ms. There are no per-frame
 timestamps within each lace.
+
+`mpeg2-top.m2v`, `mpeg2-bottom.m2v`, and `mpeg2-progressive.m2v` are single-frame
+synthetic packets for the YUV field-order test. Low-delay encoding lets the
+decoder return each frame before end of stream.
+
+```sh
+for field in top bottom; do
+  ffmpeg -f lavfi -i 'testsrc2=size=32x32:rate=50' -vf "tinterlace=interleave_$field" \
+    -frames:v 1 -c:v mpeg2video -g 1 -flags +ildct+ilme+low_delay -f mpeg2video "mpeg2-$field.m2v"
+done
+ffmpeg -f lavfi -i 'testsrc2=size=32x32:rate=25' -frames:v 1 -c:v mpeg2video \
+  -g 1 -flags +low_delay -f mpeg2video mpeg2-progressive.m2v
+```
