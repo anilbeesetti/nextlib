@@ -33,7 +33,7 @@ subprojects {
             coordinates(
                 groupId = "io.github.anilbeesetti",
                 artifactId = property("POM_ARTIFACT_ID") as String,
-                version = "${libs.versions.androidxMedia3.get()}-0.19.0"
+                version = "${libs.versions.androidxMedia3.get()}-0.20.0"
             )
 
             pom {
