@@ -71,7 +71,7 @@ final class FfmpegVideoDecoder extends
         // Format uses clockwise degrees. Ignore unsupported non-right-angle rotations.
         int rotation = format.rotationDegrees % 360;
         rotationDegrees = rotation % 90 == 0 ? (rotation + 360) % 360 : 0;
-        nativeContext = ffmpegInitialize(codecName, extraData, threads, hasHdr10ColorInfo(format.colorInfo));
+        nativeContext = ffmpegInitialize(codecName, extraData, threads, format.width, format.height, hasHdr10ColorInfo(format.colorInfo));
         if (nativeContext == 0) {
             throw new FfmpegDecoderException("Failed to initialize decoder.");
         }
@@ -112,7 +112,7 @@ final class FfmpegVideoDecoder extends
                 System.arraycopy(pps, 0, extraData, sps.length, pps.length);
                 return extraData;
             }
-            case MimeTypes.VIDEO_H265 -> {
+            case MimeTypes.VIDEO_H265, MimeTypes.VIDEO_MP4V, "video/x-ms-wmv2" -> {
                 return initializationData.get(0);
             }
             default -> {
@@ -252,7 +252,7 @@ final class FfmpegVideoDecoder extends
     }
 
     private native long ffmpegInitialize(
-            String codecName, @Nullable byte[] extraData, int threads, boolean hdr10);
+            String codecName, @Nullable byte[] extraData, int threads, int width, int height, boolean hdr10);
 
     private native long ffmpegReset(long context);
 

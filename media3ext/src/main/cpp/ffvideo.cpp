@@ -361,7 +361,7 @@ struct JniContext {
 JniContext *createVideoContext(JNIEnv *env,
                                AVCodec *codec,
                                jbyteArray extraData,
-                               jint threads) {
+                               jint threads, jint width = 0, jint height = 0) {
     auto jniContext = std::make_unique<JniContext>();
 
     AVCodecContext *codecContext = avcodec_alloc_context3(codec);
@@ -383,6 +383,10 @@ JniContext *createVideoContext(JNIEnv *env,
         env->GetByteArrayRegion(extraData, 0, size, (jbyte *) codecContext->extradata);
     }
 
+    if (width > 0 && height > 0) {
+        codecContext->width = width;
+        codecContext->height = height;
+    }
     codecContext->thread_count = threads;
     // Keep dav1d's frame threading enabled. DrainingDecoder handles delayed output
     // and drains every frame at EOS instead of forcing one frame per input.
@@ -414,7 +418,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
                                                                                  jobject thiz,
                                                                                  jstring codec_name,
                                                                                  jbyteArray extra_data,
-                                                                                 jint threads,
+                                                                                 jint threads, jint width, jint height,
                                                                                  jboolean hdr10) {
     AVCodec *codec = getCodecByName(env, codec_name);
     if (!codec) {
@@ -422,7 +426,7 @@ Java_io_github_anilbeesetti_nextlib_media3ext_ffdecoder_FfmpegVideoDecoder_ffmpe
         return 0L;
     }
 
-    auto *context = createVideoContext(env, codec, extra_data, threads);
+    auto *context = createVideoContext(env, codec, extra_data, threads, width, height);
     if (context) context->hdr10 = hdr10;
     return reinterpret_cast<jlong>(context);
 }

@@ -102,6 +102,8 @@ public final class FfmpegLibrary {
   /* package */ static String getCodecName(String mimeType) {
     return switch (mimeType) {
       // Audio codecs
+      case "audio/x-ms-wmav2" -> "wmav2";
+      case "audio/x-pcm-dvd" -> "pcm_dvd";
       case MimeTypes.AUDIO_AAC -> "aac";
       case MimeTypes.AUDIO_MPEG, MimeTypes.AUDIO_MPEG_L1, MimeTypes.AUDIO_MPEG_L2 -> "mp3";
       case MimeTypes.AUDIO_AC3 -> "ac3";
@@ -121,7 +123,9 @@ public final class FfmpegLibrary {
       case MimeTypes.VIDEO_H264 -> "h264";
       case MimeTypes.VIDEO_H265 -> "hevc";
       case MimeTypes.VIDEO_AV1 -> "libdav1d";
-      case MimeTypes.VIDEO_MPEG -> "mpegvideo";
+      case MimeTypes.VIDEO_MPEG -> "mpeg1video";
+      case MimeTypes.VIDEO_MP4V -> "mpeg4";
+      case "video/x-ms-wmv2" -> "wmv2";
       case MimeTypes.VIDEO_MPEG2 -> "mpeg2video";
       case MimeTypes.VIDEO_VP8 -> "vp8";
       case MimeTypes.VIDEO_VP9 -> "vp9";

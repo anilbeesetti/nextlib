@@ -33,7 +33,7 @@ int main(int argc, char **argv) {
     assert(codec);
     size_t pcm16Bytes = 0;
     for (bool outputFloat : {false, true}) {
-        AVCodecContext *context = createContext(nullptr, codec, nullptr, outputFloat, -1, -1);
+        AVCodecContext *context = createContext(nullptr, codec, nullptr, outputFloat, -1, -1, -1, 0);
         assert(context);
         std::vector<uint8_t> expected;
         for (int pass = 0; pass <= 32; ++pass) {
